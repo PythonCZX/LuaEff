@@ -234,6 +234,9 @@ type HOResumeOf<
   T = unknown,
 > = Name extends keyof HOEffects<T> ? HOEffects<T>[Name]["resume"] : never;
 
+type CoercePure<C extends Computation<any, any, any>> =
+  C extends Computation<never, never, infer A> ? Pure<A> : C;
+
 // export type EffectHandler<
 //   HandledEffects extends AllFOEffects,
 //   IntroducedHOEffects extends HOIntroductionRecord,
@@ -268,10 +271,12 @@ export interface EffectHandler<
 > {
   run<HO extends AllHOEffects, FO extends AllFOEffects, A>(
     computation: Computation<HO, FO, A>,
-  ): Computation<
-    HO | ArrayUnion<IntroducedHOEffects[FO]>,
-    Exclude<FO, HandledEffects> | ArrayUnion<IntroducedFOEffects[FO]>,
-    ApplyReturnTransform<Transform, A>
+  ): CoercePure<
+    Computation<
+      HO | ArrayUnion<IntroducedHOEffects[FO]>,
+      Exclude<FO, HandledEffects> | ArrayUnion<IntroducedFOEffects[FO]>,
+      ApplyReturnTransform<Transform, A>
+    >
   >;
 }
 
@@ -306,6 +311,14 @@ type FOKeyAdd<
         : R[Name];
     }
   : R & { [key in K]: [] };
+
+type FOKeyAddAll<R extends FOIntroductionRecord, V extends AllFOEffects> = {
+  [Name in keyof R]: R[Name] extends Array<infer A> ? [...A[], V] : never;
+};
+
+type HOKeyAddAll<R extends HOIntroductionRecord, V extends AllHOEffects> = {
+  [Name in keyof R]: R[Name] extends Array<infer A> ? [...A[], V] : never;
+};
 
 type HOKeyAdd<
   R extends HOIntroductionRecord,
@@ -353,7 +366,12 @@ export declare class Handler<
 
   mapReturn<F extends (x: any) => Computation<any, any, any>>(
     f: F,
-  ): Handler<HandledEffects, IntroducedHOEffects, IntroducedFOEffects, F>;
+  ): Handler<
+    HandledEffects,
+    HOKeyAddAll<IntroducedHOEffects, HOEffectsOf<ReturnType<F>>>,
+    FOKeyAddAll<IntroducedFOEffects, FOEffectsOf<ReturnType<F>>>,
+    F
+  >;
 
   build(): EffectHandler<
     HandledEffects,

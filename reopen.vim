@@ -9,13 +9,12 @@ if expand('%') == '' && !&modified && line('$') <= 1 && getline(1) == ''
 endif
 let s:shortmess_save = &shortmess
 set shortmess+=aoO
-badd +482 ~/Programming/Roblox/LuaEff/./src/LuaEff.luau
-badd +53 ~/Programming/TS/typescript-effects/tests/elaborators.test.ts
-badd +316 src/LuaEff.d.ts
-badd +13 src/Bruhs.ts
+badd +337 ~/Programming/Roblox/LuaEff/./src/LuaEff.d.ts
+badd +301 ~/Programming/Roblox/LuaEff/./src/LuaEff.luau
+badd +43 src/Bruhs.ts
 argglobal
 %argdel
-edit src/LuaEff.d.ts
+edit src/Bruhs.ts
 wincmd t
 let s:save_winminheight = &winminheight
 let s:save_winminwidth = &winminwidth
@@ -24,21 +23,21 @@ set winheight=1
 set winminwidth=0
 set winwidth=1
 argglobal
-balt src/Bruhs.ts
+balt ~/Programming/Roblox/LuaEff/./src/LuaEff.d.ts
 setlocal foldmethod=expr
-setlocal foldexpr=v:lua.LazyVim.treesitter.foldexpr()
+setlocal foldexpr=v:lua.vim.lsp.foldexpr()
 setlocal foldmarker={{{,}}}
 setlocal foldignore=#
 setlocal foldlevel=99
 setlocal foldminlines=1
 setlocal foldnestmax=20
 setlocal foldenable
-let s:l = 316 - ((44 * winheight(0) + 32) / 64)
+let s:l = 43 - ((42 * winheight(0) + 32) / 64)
 if s:l < 1 | let s:l = 1 | endif
 keepjumps exe s:l
 normal! zt
-keepjumps 316
-normal! 034|
+keepjumps 43
+normal! 029|
 tabnext 1
 if exists('s:wipebuf') && len(win_findbuf(s:wipebuf)) == 0 && getbufvar(s:wipebuf, '&buftype') isnot# 'terminal'
   silent exe 'bwipe ' . s:wipebuf

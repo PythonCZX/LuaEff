@@ -12,6 +12,8 @@ import {
   Replaced,
   _,
   Pure,
+  seq,
+  Computation,
 } from "./LuaEff";
 
 const comp = op<"io", void>(IO, () => print("Msg"));
@@ -32,11 +34,19 @@ type DoMappings<F, A> = F extends undefined
 type Gra = SomeComp extends (x: _) => infer R ? R : never;
 type O = Replaced<Gra, _, string>;
 
+const sequencing = seq(ret(42), v => ret(v));
+type TYY = Replaced<Computation<never, "io", _[]>, _, string>;
 type Testo = DoMappings<SomeComp, string>;
 
 const Test = new Handler()
-  .handle(IO, (payload, resume) => op(FAIL, undefined))
+  .handle(IO, (payload, resume) => ret(1))
   .handle(FAIL, (payload, resume) => op(IO, () => print("H")))
-  .mapReturn((x: _) => ret([x]))
+  .mapReturn((x: _) =>
+    seq(
+      op<"io", void>(IO, () => print("Returning")),
+      () => ret([x]),
+    ),
+  )
+  // .mapReturn((x: _) => ret([x]))
   .build()
   .run(comp);
