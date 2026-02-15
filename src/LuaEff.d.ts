@@ -3,6 +3,11 @@ declare const ComputationBrand: unique symbol;
 declare const FOBrand: unique symbol;
 declare const HOBrand: unique symbol;
 
+declare const _: unique symbol;
+export interface _ {
+  [_]: typeof _;
+}
+
 /**
  * A first-order effect token to be used
  * with `op` to define operations.
@@ -196,10 +201,10 @@ export declare function seq<
   then: (value: A) => Computation<HO2, FO2, B>,
 ): Computation<HO1 | HO2, FO1 | FO2, B>;
 
-type ApplyReturnTransform<F, A> = [F] extends [undefined]
+export type ApplyReturnTransform<F, A> = F extends undefined
   ? A
-  : F extends (x: A) => Computation<any, any, infer B>
-    ? B
+  : F extends (x: _) => Computation<any, any, infer B>
+    ? Replaced<B, _, A>
     : A;
 
 type FOPayloadOf<
@@ -245,6 +250,16 @@ type HOResumeOf<
 //   ApplyReturnTransform<Transform, A>
 // >;
 
+export type Replaced<T, TReplace, TWith> = T extends TReplace
+  ? T extends TReplace
+    ? TWith | Exclude<T, TReplace>
+    : T
+  : T extends (...args: any) => infer R
+    ? (...args: Parameters<T>) => Replaced<R, TReplace, TWith>
+    : {
+        [P in keyof T]: Replaced<T[P], TReplace, TWith>;
+      };
+
 export interface EffectHandler<
   HandledEffects extends AllFOEffects,
   IntroducedHOEffects extends HOIntroductionRecord,
@@ -254,8 +269,8 @@ export interface EffectHandler<
   run<HO extends AllHOEffects, FO extends AllFOEffects, A>(
     computation: Computation<HO, FO, A>,
   ): Computation<
-    HO | IntroducedHOEffects[FO],
-    Exclude<FO, HandledEffects> | IntroducedFOEffects[FO],
+    HO | ArrayUnion<IntroducedHOEffects[FO]>,
+    Exclude<FO, HandledEffects> | ArrayUnion<IntroducedFOEffects[FO]>,
     ApplyReturnTransform<Transform, A>
   >;
 }
@@ -275,8 +290,8 @@ export type EffectElaborator<
   A
 >;
 
-type FOIntroductionRecord = Record<AllFOEffects, any>;
-type HOIntroductionRecord = Record<AllHOEffects, any>;
+type FOIntroductionRecord = Record<AllFOEffects, any[]>;
+type HOIntroductionRecord = Record<AllHOEffects, any[]>;
 
 type FOKeyAdd<
   R extends FOIntroductionRecord,
@@ -340,7 +355,7 @@ export declare class Handler<
     f: F,
   ): Handler<HandledEffects, IntroducedHOEffects, IntroducedFOEffects, F>;
 
-  build<HO extends AllHOEffects, FO extends AllFOEffects, A>(): EffectHandler<
+  build(): EffectHandler<
     HandledEffects,
     IntroducedHOEffects,
     IntroducedFOEffects,
