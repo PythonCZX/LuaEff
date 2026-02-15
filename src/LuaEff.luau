@@ -60,7 +60,6 @@ ElaboratorBuilder.__index = ElaboratorBuilder
 export type ElaboratorBuilder = typeof(setmetatable(
 	{} :: {
     _methods: { [i32]: (any, any, (any) -> Node, (Node) -> Node) -> Node },
-    _introduces: { Effect }
 	},
 	ElaboratorBuilder
 ))
@@ -289,10 +288,9 @@ function HandlerBuilder.build(self: HandlerBuilder): { run: (Node) -> Node }
 	}
 end
 
-function ElaboratorBuilder.new(...)
+function ElaboratorBuilder.new()
 	local self = setmetatable({
 		_methods = {},
-		_introduces = {},
 	}, ElaboratorBuilder)
 	return self :: ElaboratorBuilder
 end
@@ -303,11 +301,6 @@ function ElaboratorBuilder.elaborate(
 	elaborator: (any, any, (any) -> Node, (Node) -> Node) -> Node
 )
 	self._methods[effect.id] = elaborator
-	return self
-end
-
-function ElaboratorBuilder.introduces(self: ElaboratorBuilder, effects: { Effect })
-	self._introduces = effects
 	return self
 end
 
