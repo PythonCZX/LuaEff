@@ -66,6 +66,8 @@ export interface FOEffects<T> {
   ndet: FOEffect<null | number | ReadonlyArray<unknown>, unknown>;
 }
 
+type BuiltinFOEffects = "io" | "fail" | "async" | "ndet";
+
 /**
  * Higher-order effect definitions.
  * @param {T} T Generic type parameter for higher-order effects that allow polymorphism.
@@ -415,3 +417,65 @@ export declare class Elaborator<
     IntroducedFOEffects
   >;
 }
+
+type Contra<T> = T extends any ? (arg: T) => void : never;
+
+type Cov<T> = T extends any ? () => T : never;
+
+type InferCov<T> = [T] extends [() => infer I] ? I : never;
+
+type InferContra<T> = [T] extends [(arg: infer I) => void] ? I : never;
+
+type PickOne<T> = InferContra<InferContra<Contra<Contra<T>>>>;
+
+type Union2Tuple<T> =
+  PickOne<T> extends infer U // assign PickOne<T> to U
+    ? Exclude<T, U> extends never // T and U are the same
+      ? [T]
+      : [...Union2Tuple<Exclude<T, U>>, U] // recursion
+    : never;
+
+type AllEffectsHandled<HO, FO> = HO extends never
+  ? Exclude<FO, BuiltinFOEffects> extends never
+    ? true
+    : false
+  : false;
+
+type FormatUnion<U extends string> = Union2Tuple<U>;
+type TupleToString<A extends string[]> = A extends [
+  infer Head1,
+  infer Head2,
+  ...infer Tail,
+]
+  ? Tail extends [string, ...string[]]
+    ? `${Head1 & string}, ${Head2 & string}, ${TupleToString<Tail>}`
+    : `${Head1 & string}, ${Head2 & string}`
+  : A extends [infer Head]
+    ? `${Head & string}`
+    : "";
+type FormatFO<FO extends AllFOEffects> =
+  FormatUnion<Exclude<FO, BuiltinFOEffects>> extends [never]
+    ? ""
+    : TupleToString<FormatUnion<Exclude<FO, BuiltinFOEffects>> & string[]>;
+
+// Clean up type names
+type UnhandledEffectError<
+  HO extends AllHOEffects,
+  FO extends AllFOEffects,
+> = `Unhandled higher-order effects: [${TupleToString<FormatUnion<HO & string> & string[]>}] | Unhandled first-order effects: [${FormatFO<FO>}]`;
+
+type RuntimeResult<FO extends AllFOEffects, A> = "async" extends FO
+  ? Promise<A>
+  : "ndet" extends FO
+    ? A[]
+    : A;
+
+export declare function run<
+  HO extends AllHOEffects,
+  FO extends AllFOEffects,
+  A,
+>(
+  computation: Computation<HO, FO, A>,
+): AllEffectsHandled<HO, FO> extends true
+  ? RuntimeResult<FO, A>
+  : UnhandledEffectError<HO, FO>;
