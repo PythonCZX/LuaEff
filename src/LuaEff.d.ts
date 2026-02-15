@@ -263,7 +263,7 @@ export type Replaced<T, TReplace, TWith> = T extends TReplace
         [P in keyof T]: Replaced<T[P], TReplace, TWith>;
       };
 
-export interface EffectHandler<
+export interface RunHandler<
   HandledEffects extends AllFOEffects,
   IntroducedHOEffects extends HOIntroductionRecord,
   IntroducedFOEffects extends FOIntroductionRecord,
@@ -280,20 +280,25 @@ export interface EffectHandler<
   >;
 }
 
-export type EffectElaborator<
+export interface RunElaborator<
   ElaboratedEffects extends AllHOEffects,
-  IntroducedFOEffects extends AllFOEffects,
-  IntroducedHOEffects extends AllHOEffects,
-  HO extends AllHOEffects,
-  FO extends AllFOEffects,
-  A,
-> = (
-  computation: Computation<HO, FO, A>,
-) => Computation<
-  Exclude<HO, ElaboratedEffects> | IntroducedHOEffects,
-  FO | IntroducedFOEffects,
-  A
->;
+  IntroducedHOEffects extends HOIntroductionRecord,
+  IntroducedFOEffects extends HOIntroductionRecord,
+> {
+  run<HO extends AllHOEffects, FO extends AllFOEffects, A>(
+    computation: Computation<HO, FO, A>,
+  ): Computation<
+    | Exclude<HO, ElaboratedEffects>
+    | ArrayUnion<
+        IntroducedHOEffects[HO extends unknown ? keyof HOEffects<any> : HO]
+      >,
+    | FO
+    | ArrayUnion<
+        IntroducedFOEffects[HO extends unknown ? keyof HOEffects<any> : HO]
+      >,
+    A
+  >;
+}
 
 type FOIntroductionRecord = Record<AllFOEffects, any[]>;
 type HOIntroductionRecord = Record<AllHOEffects, any[]>;
@@ -342,7 +347,7 @@ type ArrayUnion<Arr extends any[]> = Arr extends [...infer Tail, infer Head]
 
 export declare class Handler<
   HandledEffects extends AllFOEffects = never,
-  IntroducedHOEffects extends HOIntroductionRecord = HOIntroductionRecord,
+  IntroducedHOEffects extends HOIntroductionRecord = FOIntroductionRecord,
   IntroducedFOEffects extends FOIntroductionRecord = FOIntroductionRecord,
   Transform = undefined,
 > {
@@ -360,7 +365,7 @@ export declare class Handler<
   ): Handler<
     HandledEffects | Name,
     HOKeyAdd<IntroducedHOEffects, Name, HO>,
-    FOKeyAdd<IntroducedFOEffects, Name, Exclude<FO, Name>>,
+    FOKeyAdd<IntroducedFOEffects, Name, FO>,
     Transform
   >;
 
@@ -373,7 +378,7 @@ export declare class Handler<
     F
   >;
 
-  build(): EffectHandler<
+  build(): RunHandler<
     HandledEffects,
     IntroducedHOEffects,
     IntroducedFOEffects,
@@ -381,15 +386,32 @@ export declare class Handler<
   >;
 }
 
-// export declare class Elaborator<ElaboratedEffects extends AllHOEffects = never, IntroducedHOEffects extends AllHOEffects = never, IntroducedFOEffects extends AllFOEffects = never> {
-//   handle<Name extends AllHOEffects, HO extends AllHOEffects, FO extends AllFOEffects>(
-//     effect: HOToken<Name>,
-//     handler: (
-//       payload: HOPayloadOf<Name>,
-//       subcomputations: HOSubComputationsOf<Name>,
-//       resume: (
-//         value: HOResumeOf<Name>
-//       ) =>
-//     )
-//   )
-// }
+export declare class Elaborator<
+  ElaboratedEffects extends AllHOEffects = never,
+  IntroducedHOEffects extends HOIntroductionRecord = never,
+  IntroducedFOEffects extends HOIntroductionRecord = never,
+> {
+  elaborate<
+    T,
+    Name extends AllHOEffects,
+    HO extends AllHOEffects,
+    FO extends AllFOEffects,
+  >(
+    effect: HOToken<Name>,
+    elaborator: (
+      payload: HOPayloadOf<Name, T>,
+      subcomputations: HOSubComputationsOf<Name, T>,
+      resume: (value: HOResumeOf<Name, T>) => Computation<any, any, any>,
+    ) => Computation<HO, FO, any>,
+  ): Elaborator<
+    ElaboratedEffects | Name,
+    HOKeyAdd<IntroducedHOEffects, Name, HO>,
+    HOKeyAdd<IntroducedFOEffects, Name, FO>
+  >;
+
+  build(): RunElaborator<
+    ElaboratedEffects,
+    IntroducedHOEffects,
+    IntroducedFOEffects
+  >;
+}
