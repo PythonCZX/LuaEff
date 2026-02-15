@@ -247,7 +247,7 @@ function HandlerBuilder.mapReturn(self: HandlerBuilder, map: (any) -> Node)
 	return self
 end
 
-function HandlerBuilder.build(self: HandlerBuilder): { handle: (Node) -> Node }
+function HandlerBuilder.build(self: HandlerBuilder): { run: (Node) -> Node }
 	local methods = self._methods
 	local rf = self._ret
 
@@ -283,7 +283,7 @@ function HandlerBuilder.build(self: HandlerBuilder): { handle: (Node) -> Node }
 	end
 
 	return {
-		handle = function(node: Node): Node
+		run = function(node: Node): Node
 			return step(node, false)
 		end,
 	}
@@ -311,7 +311,7 @@ function ElaboratorBuilder.introduces(self: ElaboratorBuilder, effects: { Effect
 	return self
 end
 
-function ElaboratorBuilder.build(self: ElaboratorBuilder): { elaborate: (Node) -> Node }
+function ElaboratorBuilder.build(self: ElaboratorBuilder): { run: (Node) -> Node }
 	local methods = self._methods
 
 	local function elaborate(node: Node): Node
@@ -335,7 +335,7 @@ function ElaboratorBuilder.build(self: ElaboratorBuilder): { elaborate: (Node) -
 		return mkEff(e.eid, e.payload, resume, e.s) :: Node
 	end
 
-	return { elaborate = elaborate }
+	return { run = elaborate }
 end
 
 local function run(node: Node): any

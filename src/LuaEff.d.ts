@@ -229,21 +229,36 @@ type HOResumeOf<
   T = unknown,
 > = Name extends keyof HOEffects<T> ? HOEffects<T>[Name]["resume"] : never;
 
-export type EffectHandler<
+// export type EffectHandler<
+//   HandledEffects extends AllFOEffects,
+//   IntroducedHOEffects extends HOIntroductionRecord,
+//   IntroducedFOEffects extends FOIntroductionRecord,
+//   Transform,
+//   HO extends AllHOEffects,
+//   FO extends AllFOEffects,
+//   A,
+// > = (
+//   computation: Computation<HO, FO, A>,
+// ) => Computation<
+//   HO | IntroducedHOEffects[FO],
+//   Exclude<FO, HandledEffects> | IntroducedFOEffects[FO],
+//   ApplyReturnTransform<Transform, A>
+// >;
+
+export interface EffectHandler<
   HandledEffects extends AllFOEffects,
   IntroducedHOEffects extends HOIntroductionRecord,
   IntroducedFOEffects extends FOIntroductionRecord,
   Transform,
-  HO extends AllHOEffects,
-  FO extends AllFOEffects,
-  A,
-> = (
-  computation: Computation<HO, FO, A>,
-) => Computation<
-  HO | IntroducedHOEffects[FO],
-  Exclude<FO, HandledEffects> | IntroducedFOEffects[FO],
-  ApplyReturnTransform<Transform, A>
->;
+> {
+  run<HO extends AllHOEffects, FO extends AllFOEffects, A>(
+    computation: Computation<HO, FO, A>,
+  ): Computation<
+    HO | IntroducedHOEffects[FO],
+    Exclude<FO, HandledEffects> | IntroducedFOEffects[FO],
+    ApplyReturnTransform<Transform, A>
+  >;
+}
 
 export type EffectElaborator<
   ElaboratedEffects extends AllHOEffects,
@@ -329,10 +344,7 @@ export declare class Handler<
     HandledEffects,
     IntroducedHOEffects,
     IntroducedFOEffects,
-    Transform,
-    HO,
-    FO,
-    A
+    Transform
   >;
 }
 
