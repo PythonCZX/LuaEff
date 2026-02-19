@@ -34,7 +34,7 @@
 type i32 = number
 
 export type RetNode  = { tag: i32, val: any }
-export type EffNode  = { tag: i32, eid: i32, payload: any, k: Cont, s: any? }
+export type EffNode  = { tag: i32, eid: i32, payload: any, k: Cont, s: SubComputations? }
 export type Node     = RetNode | EffNode
 
 -- Recursive types cannot have parameters.
@@ -42,8 +42,7 @@ export type Node     = RetNode | EffNode
 export type ContFunc        = (any) -> Node
 export type ContPair        = { l: Cont, r: Cont }
 export type Cont            = ContFunc | ContPair | nil
-export type SubComputations = { [string]: Node }
-export type Effect          = { id: i32, name: string }
+export type SubComputations = { Node }
 
 local HandlerBuilder = {}
 HandlerBuilder.__index = HandlerBuilder
@@ -59,7 +58,7 @@ local ElaboratorBuilder = {}
 ElaboratorBuilder.__index = ElaboratorBuilder
 export type ElaboratorBuilder = typeof(setmetatable(
 	{} :: {
-    _methods: { [i32]: (any, any, (any) -> Node, (Node) -> Node) -> Node },
+    _methods: { [i32]: (any, SubComputations?, (any) -> Node) -> Node },
 	},
 	ElaboratorBuilder
 ))
@@ -74,38 +73,37 @@ local EID_FAIL:  i32 = 2
 local EID_ASYNC: i32 = 3
 local EID_NDET:  i32 = 4
 
-local idToEffectName = {
+local idToEffectName: { string } = {
   "io",
   "fail",
   "async",
   "ndet",
 }
-local hoIdToEffectName = {}
+local effectNameToId: { [string]: number } = {}
+for i, name in idToEffectName do
+  effectNameToId[name] = i
+end
+local hoIdToEffectName: { string } = {}
+local hoEffectNameToId: { [string]: number } = {}
 
 local _nid: i32 = 4
 local _hoNid: i32 = 0
 
-local function newEffect(name: string): Effect
-	_nid += 1
-  idToEffectName[_nid] = name
-	return table_freeze({ id = _nid, name = name }) :: Effect
+function opIO(payload: any?, k: ContFunc?): EffNode
+	return { tag = TAG_EFF, eid = EID_IO, payload = payload, k = k } :: EffNode
 end
 
-local function newHoEffect(name: string): Effect
-	_hoNid -= 1
-  hoIdToEffectName[-_hoNid] = name
-	return table_freeze({ id = _hoNid, name = name }) :: Effect
+function opFAIL(payload: any?, k: ContFunc?): EffNode
+	return { tag = TAG_EFF, eid = EID_FAIL, payload = payload, k = k } :: EffNode
 end
 
-local function getEffectName(id: i32): string
-  if id > 0 then return idToEffectName[id] end
-  return hoIdToEffectName[-id]
+function opASYNC(payload: any?, k: ContFunc?): EffNode
+	return { tag = TAG_EFF, eid = EID_ASYNC, payload = payload, k = k } :: EffNode
 end
 
-local IO: Effect    = table_freeze({ id = EID_IO,    name = "io"    }) :: Effect
-local FAIL: Effect  = table_freeze({ id = EID_FAIL,  name = "fail"  }) :: Effect
-local ASYNC: Effect = table_freeze({ id = EID_ASYNC, name = "async" }) :: Effect
-local NDET: Effect  = table_freeze({ id = EID_NDET,  name = "ndet"  }) :: Effect
+function opNDET(payload: any?, k: ContFunc?): EffNode
+	return { tag = TAG_EFF, eid = EID_NDET, payload = payload, k = k } :: EffNode
+end
 
 -- stylua: ignore end
 
@@ -141,6 +139,13 @@ local function ret(v: any): RetNode
 	return { tag = TAG_RET, val = v }
 end
 
+local function getEffectName(id: i32): string
+	if id > 0 then
+		return idToEffectName[id]
+	end
+	return hoIdToEffectName[-id]
+end
+
 local function mkEff(eid: i32, p: any, k: Cont, s: SubComputations?): EffNode
 	if s then
 		return { tag = TAG_EFF, eid = eid, payload = p, k = k, s = s }
@@ -148,15 +153,41 @@ local function mkEff(eid: i32, p: any, k: Cont, s: SubComputations?): EffNode
 	return { tag = TAG_EFF, eid = eid, payload = p, k = k }
 end
 
-local function op(effect: Effect, payload: any?, k: ContFunc?): Node
-	return { tag = TAG_EFF, eid = effect.id, payload = payload, k = k } :: Node
+-- Curry op
+local function op(name: string): (payload: any?, k: ContFunc?) -> EffNode
+	local id: number
+	if effectNameToId[name] then
+		id = effectNameToId[name]
+	else
+		_nid += 1
+		id = _nid
+		idToEffectName[id] = name
+		effectNameToId[name] = id
+	end
+	return function(payload: any?, k: ContFunc?)
+		-- NOTE: When an operation is created with a nil continuation,
+		-- we avoid storing a new default function and handle
+		-- this case in runK.
+		return { tag = TAG_EFF, eid = id, payload = payload, k = k } :: EffNode
+	end
 end
 
-local function hOp(effect: Effect, payload: any?, s: SubComputations?, k: ContFunc?): Node
-	if s then
-		return { tag = TAG_EFF, eid = effect.id, payload = payload, k = k, s = s } :: Node
+local function hOp(name: string): (payload: any?, s: SubComputations?, k: ContFunc?) -> EffNode
+	local hId: number
+	if hoEffectNameToId[name] then
+		hId = _hoNid
+	else
+		_hoNid -= 1
+		hId = _hoNid
+		hoIdToEffectName[-hId] = name
+		hoEffectNameToId[name] = -hId
 	end
-	return { tag = TAG_EFF, eid = effect.id, payload = payload, k = k } :: Node
+	return function(payload: any?, s: SubComputations?, k: ContFunc?)
+		if s then
+			return { tag = TAG_EFF, eid = hId, payload = payload, k = k, s = s } :: EffNode
+		end
+		return { tag = TAG_EFF, eid = hId, payload = payload, k = k } :: EffNode
+	end
 end
 
 local function concatK(a: Cont, b: Cont): Cont
@@ -236,8 +267,8 @@ function HandlerBuilder.new(): HandlerBuilder
 	return self :: HandlerBuilder
 end
 
-function HandlerBuilder.handle(self: HandlerBuilder, effect: Effect, handler: (any, (any) -> Node) -> Node)
-	self._methods[effect.id] = handler
+function HandlerBuilder.handle(self: HandlerBuilder, name: string, handler: (any, (any) -> Node) -> Node)
+	self._methods[effectNameToId[name]] = handler
 	return self
 end
 
@@ -297,10 +328,10 @@ end
 
 function ElaboratorBuilder.elaborate(
 	self: ElaboratorBuilder,
-	effect: Effect,
-	elaborator: (any, any, (any) -> Node, (Node) -> Node) -> Node
+	name: string,
+	elaborator: (any, SubComputations?, (any) -> Node) -> Node
 )
-	self._methods[effect.id] = elaborator
+	self._methods[hoEffectNameToId[name]] = elaborator
 	return self
 end
 
@@ -308,24 +339,37 @@ function ElaboratorBuilder.build(self: ElaboratorBuilder): { run: (Node) -> Node
 	local methods = self._methods
 
 	local function elaborate(node: Node): Node
-		if node.tag == TAG_RET then
-			return node
-		end
+		while true do
+			if node.tag == TAG_RET then
+				return node
+			end
 
-		local e: EffNode = node :: EffNode
-		local m = methods[e.eid]
-		local k: Cont = e.k
-		local resume = function(v: any): Node
-			return elaborate(runK(k, v))
-		end
+			local e: EffNode = node :: EffNode
+			local m = methods[e.eid]
+			local k: Cont = e.k
+			local s: SubComputations? = e.s
+			if s then
+				for i = 1, #s do
+					local subs = e.s :: SubComputations
+					subs[i] = elaborate(subs[i])
+				end
+			end
+			local resume = function(v: any): Node
+				return elaborate(runK(k, v))
+			end
 
-		if m then
-			local result: Node = m(e.payload, e.s, resume, elaborate)
-			return elaborate(result)
-		end
+			if m then
+				local result: Node = m(e.payload, s, resume)
+				if result.tag == TAG_EFF then
+					node = result
+					continue
+				end
+				return result
+			end
 
-		-- Not an effect we elaborate; forward with elaborated continuation
-		return mkEff(e.eid, e.payload, resume, e.s) :: Node
+			-- Not an effect we elaborate; forward with elaborated continuation
+			return mkEff(e.eid, e.payload, resume, e.s) :: Node
+		end
 	end
 
 	return { run = elaborate }
@@ -445,21 +489,17 @@ local function pipe(initial: any, ...: (any) -> any): any
 end
 
 return table_freeze({
-	-- Token constructors
-	newEffect = newEffect,
-	newHoEffect = newHoEffect,
-
-	-- Built-in effect tokens
-	IO = IO,
-	FAIL = FAIL,
-	ASYNC = ASYNC,
-	NDET = NDET,
-
 	-- Node constructors
 	ret = ret,
 	op = op,
 	hOp = hOp,
 	mkEff = mkEff,
+
+	-- Built-ins
+	opIO = opIO,
+	opFAIL = opFAIL,
+	opASYNC = opASYNC,
+	opNDET = opNDET,
 
 	-- sequencing
 	seq = seq,
