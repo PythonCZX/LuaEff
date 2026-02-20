@@ -73,7 +73,7 @@ type AllHOEffects = keyof HOEffects<any>;
 type AllEffects = AllHOEffects | AllFOEffects;
 
 /**
- * A computation to be handled, elaborated, or run.
+ * A computation to be handled, elaborated, or uun.
  * @param {HO} HO Union of higher-order effect names.
  * @param {FO} FO Union of first-order effect names.
  * @param {A} A Result type of the computation.
@@ -229,6 +229,7 @@ export interface RunHandler<
   Transform,
 > {
   run<HO extends AllHOEffects, FO extends AllFOEffects, A>(
+    this: void,
     computation: Computation<HO, FO, A>,
   ): CoercePure<
     Computation<
@@ -246,6 +247,7 @@ export interface RunElaborator<
   IntroducedFOEffects extends HOIntroductionRecord,
 > {
   run<HO extends AllHOEffects, FO extends AllFOEffects, A>(
+    this: void,
     computation: Computation<HO, FO, A>,
   ): Computation<
     | Exclude<HO, ElaboratedEffects>

@@ -143,7 +143,7 @@ local function op(name: string, payload: any?): EffNode
 	-- we avoid storing a new default function and handle
 	-- this case in runK.
 	local id = effectNameToId[name]
-	if not id then
+	if id == nil then
 		_nid += 1
 		id = _nid
 		idToEffectName[id] = name
@@ -244,7 +244,14 @@ function HandlerBuilder.new(): HandlerBuilder
 end
 
 function HandlerBuilder.handle(self: HandlerBuilder, name: string, handler: (any, (any) -> Node) -> Node)
-	self._methods[effectNameToId[name]] = handler
+	local id = effectNameToId[name]
+	if id == nil then
+		_nid += 1
+		id = _nid
+		idToEffectName[id] = name
+		effectNameToId[name] = id
+	end
+	self._methods[id] = handler
 	return self
 end
 
@@ -270,11 +277,10 @@ function HandlerBuilder.build(self: HandlerBuilder): { run: (Node) -> Node }
 			local m = methods[e.eid]
 			local k: Cont = e.k
 
-			local resume = function(v: any): Node
-				return step(runK(k, v), false)
-			end
-
 			if m then
+				local resume = function(v: any): Node
+					return step(runK(k, v), false)
+				end
 				local result: Node = m(e.payload, resume)
 				if result.tag == TAG_EFF then
 					n = result
@@ -282,6 +288,10 @@ function HandlerBuilder.build(self: HandlerBuilder): { run: (Node) -> Node }
 					continue
 				end
 				return result
+			end
+
+			local resume = function(v: any): Node
+				return step(runK(k, v), pass)
 			end
 
 			return mkEff(e.eid, e.payload, resume, e.s) :: Node
@@ -446,7 +456,7 @@ end
 local function do_(genFn: () -> any): Node
 	local iter = genFn()
 	local function step(v: any): Node
-		local r = iter:next(v)
+		local r = iter.next(v)
 		if r.done then
 			return ret(r.value)
 		end
