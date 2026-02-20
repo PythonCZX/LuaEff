@@ -89,22 +89,6 @@ local hoEffectNameToId: { [string]: number } = {}
 local _nid: i32 = 4
 local _hoNid: i32 = 0
 
-function opIO(payload: any?, k: ContFunc?): EffNode
-	return { tag = TAG_EFF, eid = EID_IO, payload = payload, k = k } :: EffNode
-end
-
-function opFAIL(payload: any?, k: ContFunc?): EffNode
-	return { tag = TAG_EFF, eid = EID_FAIL, payload = payload, k = k } :: EffNode
-end
-
-function opASYNC(payload: any?, k: ContFunc?): EffNode
-	return { tag = TAG_EFF, eid = EID_ASYNC, payload = payload, k = k } :: EffNode
-end
-
-function opNDET(payload: any?, k: ContFunc?): EffNode
-	return { tag = TAG_EFF, eid = EID_NDET, payload = payload, k = k } :: EffNode
-end
-
 -- stylua: ignore end
 
 local POOL_CAP: i32 = 32
@@ -154,40 +138,32 @@ local function mkEff(eid: i32, p: any, k: Cont, s: SubComputations?): EffNode
 end
 
 -- Curry op
-local function op(name: string): (payload: any?, k: ContFunc?) -> EffNode
-	local id: number
-	if effectNameToId[name] then
-		id = effectNameToId[name]
-	else
+local function op(name: string, payload: any?): EffNode
+	-- NOTE: When an operation is created with a nil continuation,
+	-- we avoid storing a new default function and handle
+	-- this case in runK.
+	local id = effectNameToId[name]
+	if not id then
 		_nid += 1
 		id = _nid
 		idToEffectName[id] = name
 		effectNameToId[name] = id
 	end
-	return function(payload: any?, k: ContFunc?)
-		-- NOTE: When an operation is created with a nil continuation,
-		-- we avoid storing a new default function and handle
-		-- this case in runK.
-		return { tag = TAG_EFF, eid = id, payload = payload, k = k } :: EffNode
-	end
+	return { tag = TAG_EFF, eid = id, payload = payload, k = nil } :: EffNode
 end
 
-local function hOp(name: string): (payload: any?, s: SubComputations?, k: ContFunc?) -> EffNode
-	local hId: number
-	if hoEffectNameToId[name] then
-		hId = _hoNid
-	else
+local function hOp(name: string, payload: any?, s: SubComputations?, k: ContFunc?): EffNode
+	local hId = hoEffectNameToId[name]
+	if not hId then
 		_hoNid -= 1
 		hId = _hoNid
 		hoIdToEffectName[-hId] = name
 		hoEffectNameToId[name] = -hId
 	end
-	return function(payload: any?, s: SubComputations?, k: ContFunc?)
-		if s then
-			return { tag = TAG_EFF, eid = hId, payload = payload, k = k, s = s } :: EffNode
-		end
-		return { tag = TAG_EFF, eid = hId, payload = payload, k = k } :: EffNode
+	if s then
+		return { tag = TAG_EFF, eid = hId, payload = payload, k = k, s = s } :: EffNode
 	end
+	return { tag = TAG_EFF, eid = hId, payload = payload, k = k } :: EffNode
 end
 
 local function concatK(a: Cont, b: Cont): Cont
@@ -493,13 +469,6 @@ return table_freeze({
 	ret = ret,
 	op = op,
 	hOp = hOp,
-	mkEff = mkEff,
-
-	-- Built-ins
-	opIO = opIO,
-	opFAIL = opFAIL,
-	opASYNC = opASYNC,
-	opNDET = opNDET,
 
 	-- sequencing
 	seq = seq,

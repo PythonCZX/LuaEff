@@ -2,6 +2,8 @@
 declare const ComputationBrand: unique symbol;
 declare const FOBrand: unique symbol;
 declare const HOBrand: unique symbol;
+declare const FORecordBrand: unique symbol;
+declare const HORecordBrand: unique symbol;
 
 declare const _: unique symbol;
 export interface _ {
@@ -11,42 +13,43 @@ export interface _ {
 export type Resume<T> = (value: T) => Computation<any, any, any>;
 
 /**
- * A first-order effect token to be used
- * with `op` to define operations.
+ * A first-order effect.
+ * @param {Payload} Payload The type of the value to be supplied to the effect.
+ * @param {Resume} Resume The type of the value passed into the next continuation.
  */
-export type FOOperation<Name extends AllFOEffects> = (
-  payload: FOPayloadOf<Name>,
-) => Computation<never, Name, FOResumeOf<Name>>;
+export interface FOEffect<Payload, Resume> {
+  readonly payload: Payload;
+  readonly resume: Resume;
+}
 
 /**
- * A higher-order effect token to be used
- * with `hOp` to define higher-order operations.
+ * A higher-order effect.
+ * @param {Payload} Payload Type of the value to be supplied to the effect.
+ * @param {SubComputations} SubComputations Tuple type of the computations to be elaborated.
+ * @param {Resume} Resume Type of the value passed into the next continuation.
  */
-export type HOOperation<Name extends AllHOEffects> = (
-  payload: HOPayloadOf<Name>,
-  subcomputations: HOSubComputationsOf<Name>,
-) => Computation<Name, never, HOResumeOf<Name>>;
+export interface HOEffect<
+  Payload,
+  SubComputations extends
+    | { [key: string]: Computation<any, any, any> }
+    | { [key: number]: Computation<any, any, any> },
+  Resume,
+> {
+  readonly payload: Payload;
+  readonly subcomputations: SubComputations;
+  readonly resume: Resume;
+}
 
 /**
  * First-order effect definitions.
  * @param {T} T Generic type parameter for effects that allow polymorphism.
  * Effects polymorphic in multiple type parameters should instead use a wrapper around `op`.
  */
-// export interface FOEffects<T> {
-//   io: FOEffect<() => T, T>;
-//   fail: FOEffect<undefined, never>;
-//   async: FOEffect<() => Promise<T>, T>;
-//   ndet: FOEffect<null | number | ReadonlyArray<unknown>, unknown>;
-// }
-
-export interface FOEffects<R extends AnyComputation = AnyComputation> {
-  io: <T>(payload: () => T, resume: Resume<T>) => R;
-  fail: (payload: undefined, resume: Resume<never>) => R;
-  async: <T>(payload: () => Promise<T>, resume: Resume<T>) => R;
-  ndet: (
-    payload: null | number | ReadonlyArray<unknown>,
-    resume: Resume<unknown>,
-  ) => R;
+export interface FOEffects<T> {
+  io: FOEffect<() => T, T>;
+  fail: FOEffect<undefined, never>;
+  async: FOEffect<() => Promise<T>, T>;
+  ndet: FOEffect<null | number | ReadonlyArray<unknown>, unknown>;
 }
 
 type BuiltinFOEffects = "io" | "fail" | "async" | "ndet";
@@ -56,16 +59,17 @@ type BuiltinFOEffects = "io" | "fail" | "async" | "ndet";
  * @param {T} T Generic type parameter for higher-order effects that allow polymorphism.
  * Effects polymorphic in multiple type parameters should instead use a wrapper around `hOp`.
  */
-export interface HOEffects<R extends AnyComputation = AnyComputation> {
-  parallel: <Ts extends unknown[]>(
-    payload: undefined,
-    subcomputations: { [K in keyof Ts]: Computation<any, any, Ts> },
-    resume: Resume<Ts>,
-  ) => R;
+export interface HOEffects<T> {
+  parallel: HOEffect<
+    undefined,
+    { [K in keyof T]: Computation<any, any, T[K]> },
+    T
+  >;
+  foo: HOEffect<T, [AnyComputation], T>;
 }
 
-type AllFOEffects = keyof FOEffects;
-type AllHOEffects = keyof HOEffects;
+type AllFOEffects = keyof FOEffects<any>;
+type AllHOEffects = keyof HOEffects<any>;
 type AllEffects = AllHOEffects | AllFOEffects;
 
 /**
@@ -128,21 +132,19 @@ export type FOComputation<FO extends AllFOEffects, A> = Computation<
   A
 >;
 
-export declare const opIO: FOOperation<"io">;
-export declare const opFAIL: FOOperation<"fail">;
-export declare const opASYNC: FOOperation<"async">;
-export declare const opNDET: FOOperation<"ndet">;
-
 /** Lifts a value into a computation. */
 export declare function ret<A>(value: A): Pure<A>;
 
-export declare function op<Name extends AllFOEffects>(
+export declare function op<Name extends AllFOEffects, T>(
   effect: Name,
-): FOOperation<Name>;
+  payload: FOPayloadOf<Name, T>,
+): Computation<never, Name, FOResumeOf<Name, T>>;
 
-export declare function hOp<Name extends AllHOEffects>(
+export declare function hOp<Name extends AllHOEffects, T>(
   effect: Name,
-): HOOperation<Name>;
+  payload: HOResumeOf<Name, T>,
+  subcomputations: HOSubComputationsOf<Name, T>,
+): Computation<Name, never, HOResumeOf<Name, T>>;
 
 /** Binds the output of the first computation to the given function. */
 export declare function seq<
@@ -160,79 +162,35 @@ export declare function seq<
 export type ApplyReturnTransform<F, A> = F extends undefined
   ? A
   : F extends (x: _) => Computation<any, any, infer B>
-    ? Replaced<B, _, A>
+    ? Substitute<B, _, A>
     : A;
 
-type FOPayloadOf<Name extends AllFOEffects> = FOEffects[Name] extends (
-  payload: infer P,
-  resume: any,
-) => AnyComputation
-  ? P
-  : never;
+type FOPayloadOf<Name extends AllFOEffects, T> = FOEffects<T>[Name]["payload"];
 
-type FOResumeOf<Name extends AllFOEffects> = FOEffects[Name] extends (
-  payload: any,
-  resume: (x: infer R) => AnyComputation,
-) => AnyComputation
-  ? R
-  : never;
+type FOResumeOf<Name extends AllFOEffects, T> = FOEffects<T>[Name]["resume"];
 
-type FOHandlerOf<
-  Name extends AllFOEffects,
-  HO extends AllHOEffects,
-  FO extends AllFOEffects,
-  A,
-> = FOEffects<Computation<HO, FO, A>>[Name];
+type FOHandlerOf<Name extends AllFOEffects, T> = (
+  payload: FOPayloadOf<Name, T>,
+  resume: Resume<FOResumeOf<Name, T>>,
+) => AnyComputation;
 
-type HOPayloadOf<Name extends AllHOEffects> = HOEffects[Name] extends (
-  payload: infer P,
-  subcomputations: any,
-  resume: any,
-) => AnyComputation
-  ? P
-  : never;
+type HOPayloadOf<Name extends AllHOEffects, T> = HOEffects<T>[Name]["payload"];
 
-type HOSubComputationsOf<Name extends AllHOEffects> = HOEffects[Name] extends (
-  payload: any,
-  subcomputations: infer S,
-  resume: any,
-) => AnyComputation
-  ? S
-  : never;
-
-type HOResumeOf<Name extends AllHOEffects> = HOEffects[Name] extends (
-  payload: any,
-  subcomputations: any,
-  resume: (x: infer R) => AnyComputation,
-) => AnyComputation
-  ? R
-  : never;
-
-type HOElaboratorOf<
+type HOSubComputationsOf<
   Name extends AllHOEffects,
-  HO extends AllHOEffects,
-  FO extends AllFOEffects,
-  A,
-> = HOEffects<Computation<HO, FO, A>>[Name];
+  T,
+> = HOEffects<T>[Name]["subcomputations"];
+
+type HOResumeOf<Name extends AllHOEffects, T> = HOEffects<T>[Name]["resume"];
+
+type HOElaboratorOf<Name extends AllHOEffects, T> = (
+  payload: HOPayloadOf<Name, T>,
+  subcomputations: HOSubComputationsOf<Name, T>,
+  resume: HOResumeOf<Name, T>,
+) => AnyComputation;
 
 type CoercePure<C extends Computation<any, any, any>> =
   C extends Computation<never, never, infer A> ? Pure<A> : C;
-
-// export type EffectHandler<
-//   HandledEffects extends AllFOEffects,
-//   IntroducedHOEffects extends HOIntroductionRecord,
-//   IntroducedFOEffects extends FOIntroductionRecord,
-//   Transform,
-//   HO extends AllHOEffects,
-//   FO extends AllFOEffects,
-//   A,
-// > = (
-//   computation: Computation<HO, FO, A>,
-// ) => Computation<
-//   HO | IntroducedHOEffects[FO],
-//   Exclude<FO, HandledEffects> | IntroducedFOEffects[FO],
-//   ApplyReturnTransform<Transform, A>
-// >;
 
 type CoerceComputation<T> =
   T extends Computation<never, never, infer A>
@@ -241,15 +199,28 @@ type CoerceComputation<T> =
       ? Computation<HO, FO, A>
       : T;
 
-export type Replaced<T, TReplace, TWith> = T extends TReplace
-  ? T extends TReplace
-    ? TWith | Exclude<T, TReplace>
-    : T
-  : T extends (...args: any) => infer R
-    ? (...args: Parameters<T>) => Replaced<R, TReplace, TWith>
-    : CoerceComputation<{
-        [P in keyof T]: Replaced<T[P], TReplace, TWith>;
-      }>;
+type ReplaceInTuple<T extends any[], TReplace, TWith> = T extends []
+  ? []
+  : T extends [infer Head, ...infer Tail]
+    ? [
+        Substitute<Head, TReplace, TWith>,
+        ...ReplaceInTuple<Tail, TReplace, TWith>,
+      ]
+    : { [K in keyof T]: Substitute<T[K], TReplace, TWith> };
+
+type Substitute<T, TReplace, TWith> = T extends TReplace
+  ? TWith | Exclude<T, TReplace>
+  : T extends Computation<infer HO, infer FO, infer A>
+    ? Computation<HO, FO, Substitute<A, TReplace, TWith>>
+    : T extends (...args: infer Args) => infer R
+      ? (
+          ...args: ReplaceInTuple<
+            Args extends any[] ? Args : never,
+            TReplace,
+            TWith
+          >
+        ) => Substitute<R, TReplace, TWith>
+      : { [P in keyof T]: Substitute<T[P], TReplace, TWith> };
 
 export interface RunHandler<
   HandledEffects extends AllFOEffects,
@@ -261,8 +232,9 @@ export interface RunHandler<
     computation: Computation<HO, FO, A>,
   ): CoercePure<
     Computation<
-      HO | ArrayUnion<IntroducedHOEffects[FO]>,
-      Exclude<FO, HandledEffects> | ArrayUnion<IntroducedFOEffects[FO]>,
+      HO | ArrayUnion<IntroducedHOEffects["record"][FO]>,
+      | Exclude<FO, HandledEffects>
+      | ArrayUnion<IntroducedFOEffects["record"][FO]>,
       ApplyReturnTransform<Transform, A>
     >
   >;
@@ -278,18 +250,28 @@ export interface RunElaborator<
   ): Computation<
     | Exclude<HO, ElaboratedEffects>
     | ArrayUnion<
-        IntroducedHOEffects[HO extends unknown ? keyof HOEffects<any> : HO]
+        IntroducedHOEffects["record"][HO extends unknown
+          ? keyof HOEffects<any>
+          : HO]
       >,
     | FO
     | ArrayUnion<
-        IntroducedFOEffects[HO extends unknown ? keyof HOEffects<any> : HO]
+        IntroducedFOEffects["record"][HO extends unknown
+          ? keyof HOEffects<any>
+          : HO]
       >,
     A
   >;
 }
 
-type FOIntroductionRecord = Record<AllFOEffects, any[]>;
-type HOIntroductionRecord = Record<AllHOEffects, any[]>;
+interface FOIntroductionRecord {
+  record: Record<AllFOEffects, any[]>;
+  [FORecordBrand]: typeof FORecordBrand;
+}
+type HOIntroductionRecord = {
+  record: Record<AllHOEffects, any[]>;
+  [HORecordBrand]: typeof HORecordBrand;
+};
 
 type FOKeyAdd<
   R extends FOIntroductionRecord,
@@ -306,11 +288,21 @@ type FOKeyAdd<
   : R & { [key in K]: [] };
 
 type FOKeyAddAll<R extends FOIntroductionRecord, V extends AllFOEffects> = {
-  [Name in keyof R]: R[Name] extends Array<infer A> ? [...A[], V] : never;
+  record: {
+    [Name in keyof R["record"]]: R["record"][Name] extends Array<infer A>
+      ? [...A[], V]
+      : never;
+  };
+  [FORecordBrand]: typeof FORecordBrand;
 };
 
 type HOKeyAddAll<R extends HOIntroductionRecord, V extends AllHOEffects> = {
-  [Name in keyof R]: R[Name] extends Array<infer A> ? [...A[], V] : never;
+  record: {
+    [Name in keyof R["record"]]: R["record"][Name] extends Array<infer A>
+      ? [...A[], V]
+      : never;
+  };
+  [HORecordBrand]: typeof HORecordBrand;
 };
 
 type HOKeyAdd<
@@ -339,17 +331,17 @@ export declare class Handler<
   IntroducedFOEffects extends FOIntroductionRecord = FOIntroductionRecord,
   Transform = undefined,
 > {
-  handle<
-    Name extends AllFOEffects,
-    HO extends AllHOEffects = never,
-    FO extends AllFOEffects = never,
-  >(
+  handle<Name extends AllFOEffects, T = unknown>(
     effect: Name,
-    handler: FOHandlerOf<Name, HO, FO, any>,
+    handler: FOHandlerOf<Name, T>,
   ): Handler<
     HandledEffects | Name,
-    FOKeyAdd<IntroducedHOEffects, Name, HO>,
-    FOKeyAdd<IntroducedFOEffects, Name, FO>,
+    ReturnType<typeof handler> extends Computation<infer HO, any, any>
+      ? FOKeyAdd<IntroducedHOEffects, Name, HO>
+      : never,
+    ReturnType<typeof handler> extends Computation<any, infer FO, any>
+      ? FOKeyAdd<IntroducedFOEffects, Name, FO>
+      : never,
     Transform
   >;
 
@@ -375,17 +367,17 @@ export declare class Elaborator<
   IntroducedHOEffects extends HOIntroductionRecord = never,
   IntroducedFOEffects extends HOIntroductionRecord = never,
 > {
-  elaborate<
-    Name extends AllHOEffects,
-    HO extends AllHOEffects,
-    FO extends AllFOEffects,
-  >(
-    effect: HOOperation<Name>,
-    elaborator: HOElaboratorOf<Name, HO, FO, any>,
+  elaborate<Name extends AllHOEffects, T>(
+    effect: Name,
+    elaborator: HOElaboratorOf<Name, T>,
   ): Elaborator<
     ElaboratedEffects | Name,
-    HOKeyAdd<IntroducedHOEffects, Name, HO>,
-    HOKeyAdd<IntroducedFOEffects, Name, FO>
+    ReturnType<typeof elaborator> extends Computation<infer HO, any, any>
+      ? HOKeyAdd<IntroducedHOEffects, Name, HO>
+      : never,
+    ReturnType<typeof elaborator> extends Computation<any, infer FO, any>
+      ? HOKeyAdd<IntroducedFOEffects, Name, FO>
+      : never
   >;
 
   build(): RunElaborator<
@@ -406,10 +398,10 @@ type InferContra<T> = [T] extends [(arg: infer I) => void] ? I : never;
 type PickOne<T> = InferContra<InferContra<Contra<Contra<T>>>>;
 
 type UnionToTuple<T> =
-  PickOne<T> extends infer U // assign PickOne<T> to U
-    ? Exclude<T, U> extends never // T and U are the same
+  PickOne<T> extends infer U
+    ? Exclude<T, U> extends never
       ? [T]
-      : [...UnionToTuple<Exclude<T, U>>, U] // recursion
+      : [...UnionToTuple<Exclude<T, U>>, U]
     : never;
 
 type AllEffectsHandled<HO, FO> = HO extends never
@@ -456,3 +448,86 @@ export declare function run<
 ): AllEffectsHandled<HO, FO> extends true
   ? RuntimeResult<FO, A>
   : UnhandledEffectError<HO, FO>;
+
+export declare function pipe<A>(a: A): A;
+export declare function pipe<A, B>(a: A, ab: (a: A) => B): B;
+export declare function pipe<A, B, C>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+): C;
+export declare function pipe<A, B, C, D>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+  cd: (c: C) => D,
+): D;
+export declare function pipe<A, B, C, D, E>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+  cd: (c: C) => D,
+  de: (d: D) => E,
+): E;
+export declare function pipe<A, B, C, D, E, F>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+  cd: (c: C) => D,
+  de: (d: D) => E,
+  ef: (e: E) => F,
+): F;
+export declare function pipe<A, B, C, D, E, F, G>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+  cd: (c: C) => D,
+  de: (d: D) => E,
+  ef: (e: E) => F,
+  fg: (f: F) => G,
+): G;
+export declare function pipe<A, B, C, D, E, F, G, H>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+  cd: (c: C) => D,
+  de: (d: D) => E,
+  ef: (e: E) => F,
+  fg: (f: F) => G,
+  gh: (g: G) => H,
+): H;
+export declare function pipe<A, B, C, D, E, F, G, H, I>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+  cd: (c: C) => D,
+  de: (d: D) => E,
+  ef: (e: E) => F,
+  fg: (f: F) => G,
+  gh: (g: G) => H,
+  hi: (h: H) => I,
+): I;
+export declare function pipe<A, B, C, D, E, F, G, H, I, J>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+  cd: (c: C) => D,
+  de: (d: D) => E,
+  ef: (e: E) => F,
+  fg: (f: F) => G,
+  gh: (g: G) => H,
+  hi: (h: H) => I,
+  ij: (i: I) => J,
+): J;
+
+export type DoGenerator<
+  HO extends AllHOEffects,
+  FO extends AllFOEffects,
+  A,
+> = Generator<Computation<HO, FO, any>, A, any>;
+
+export declare function do_<
+  HO extends AllHOEffects,
+  FO extends AllFOEffects,
+  A,
+>(genFn: () => DoGenerator<HO, FO, A>): Computation<HO, FO, A>;

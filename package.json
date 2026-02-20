@@ -1,18 +1,19 @@
 {
   "name": "@rbxts/luaeff",
   "version": "1.0.0",
-  "description": "",
-  "main": "out/init.lua",
+  "description": "Algebraic effects for Luau",
+  "main": "out/LuaEff.lua",
   "scripts": {
     "build": "rbxtsc",
     "watch": "rbxtsc -w",
     "prepublishOnly": "npm run build"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "repository": "https://github.com/PythonCZX/LuaEff",
+  "author": "Yargrimm",
+  "license": "MIT",
   "type": "commonjs",
-  "types": "out/index.d.ts",
+  "types": "out/LuaEff.d.ts",
   "files": [
     "out",
     "!**/*.tsbuildinfo"
