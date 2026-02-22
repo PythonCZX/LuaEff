@@ -449,6 +449,32 @@ local function pipe(initial: any, ...: (any) -> any): any
 	return acc
 end
 
+local function generator(callback: (any) -> any)
+	local co = coroutine.create(callback)
+	return {
+		next = function(...)
+			if coroutine.status(co) == "dead" then
+				return { done = true }
+			else
+				local success, value = coroutine.resume(co, ...)
+				if success == false then
+					error(value, 2)
+				end
+				return {
+					value = value,
+					done = coroutine.status(co) == "dead",
+				}
+			end
+		end,
+	}
+end
+
+local function perform(computation)
+	return generator(function()
+		return coroutine.yield(computation)
+	end)
+end
+
 return table_freeze({
 	-- Node constructors
 	ret = ret,
@@ -472,4 +498,5 @@ return table_freeze({
 	-- Utilities
 	do_ = do_,
 	pipe = pipe,
+	perform = perform,
 })

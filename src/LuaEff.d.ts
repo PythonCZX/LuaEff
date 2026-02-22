@@ -109,14 +109,14 @@ type Sequence<Current, Then> = Computation<
 
 interface HandlerHKT {
   readonly computationReturn: unknown;
-  readonly continuation: Computation<any, any, unknown>;
+  readonly continuation: Pure<unknown>;
 }
 
 interface ElaboratorHKT {
   readonly computationReturn: unknown;
   readonly higherOrderEffects: SubHOEffects;
   readonly firstOrderEffects: SubFOEffects;
-  readonly continuation: Computation<any, any, unknown>;
+  readonly continuation: Pure<unknown>;
 }
 
 type ApplyHandlerHKT<F, Return, Continuation> = F extends {
@@ -393,7 +393,7 @@ declare function handles<Name extends AllFOEffects>(
     (
       payload: FOPayloadOf<Name, unknown>,
       resume: (value: FOResumeOf<Name, any>) => any,
-    ) => AnyComputation
+    ) => any
   >,
 ) => void;
 
@@ -412,7 +412,7 @@ declare function elaborates<Name extends AllHOEffects>(
 ) => void;
 
 declare function withHandler<HKT extends HandlerHKT>(
-  handler: ApplyHandlerHKT<HKT, any, any>,
+  handler: ApplyHandlerHKT<HKT, unknown, unknown>,
 ): {
   run<C extends AnyComputation>(computation: C): WithHandler<HKT, C>;
 };
@@ -500,6 +500,10 @@ declare function do_<HO extends AllHOEffects, FO extends AllFOEffects, A>(
   genFn: () => DoGenerator<HO, FO, A>,
 ): Computation<HO, FO, A>;
 
+declare function perform<HO extends AllHOEffects, FO extends AllFOEffects, A>(
+  computation: Computation<HO, FO, A>,
+): Generator<Computation<HO, FO, any>, A, any>;
+
 export {
   ret,
   op,
@@ -512,11 +516,14 @@ export {
   run,
   pipe,
   do_,
+  perform,
 };
 
 export type {
   FOEffect,
   HOEffect,
+  FOEffects,
+  HOEffects,
   SubFOEffects,
   SubHOEffects,
   AllFOEffects,
@@ -546,4 +553,18 @@ export type {
   WithElaborator,
   ZipAll,
   ZipN,
+  IntroducedFOEffectsFromHandlerHKTFor,
+  IntroducedHOEffectsFromHandlerHKTFor,
+  IntroducedFOEffectsFromHandlerReturn,
+  IntroducedHOEffectsFromHandlerReturn,
+  TransformHandlerReturn,
+  HandledEffectsFromHKT,
 };
+
+// | HOEffectsOf<C>
+// | IntroducedHOEffectsFromHandlerHKTFor<HKT, FOEffectsOf<C>>
+// | IntroducedHOEffectsFromHandlerReturn<HKT>,
+// | Exclude<FOEffectsOf<C>, HandledEffectsFromHKT<HKT>>
+// | IntroducedFOEffectsFromHandlerHKTFor<HKT, FOEffectsOf<C>>
+// | IntroducedFOEffectsFromHandlerReturn<HKT>,
+// TransformHandlerReturn<HKT, ResultOf<C>>
