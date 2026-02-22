@@ -1,90 +1,54 @@
-// Strictly internal type brands
 declare const ComputationBrand: unique symbol;
-declare const FOBrand: unique symbol;
-declare const HOBrand: unique symbol;
-declare const FORecordBrand: unique symbol;
-declare const HORecordBrand: unique symbol;
+declare const SubComputationBrand: unique symbol;
 
-declare const _: unique symbol;
-export interface _ {
-  [_]: typeof _;
-}
-
-export type Resume<T> = (value: T) => Computation<any, any, any>;
-
-/**
- * A first-order effect.
- * @param {Payload} Payload The type of the value to be supplied to the effect.
- * @param {Resume} Resume The type of the value passed into the next continuation.
- */
-export interface FOEffect<Payload, Resume> {
+interface FOEffect<Payload, Resume> {
   readonly payload: Payload;
   readonly resume: Resume;
 }
 
-/**
- * A higher-order effect.
- * @param {Payload} Payload Type of the value to be supplied to the effect.
- * @param {SubComputations} SubComputations Tuple type of the computations to be elaborated.
- * @param {Resume} Resume Type of the value passed into the next continuation.
- */
-export interface HOEffect<
+interface HOEffect<
   Payload,
-  SubComputations extends
-    | { [key: string]: Computation<any, any, any> }
-    | { [key: number]: Computation<any, any, any> },
+  SubResults extends { readonly [key: number]: unknown },
   Resume,
 > {
   readonly payload: Payload;
-  readonly subcomputations: SubComputations;
+  readonly results: SubResults;
   readonly resume: Resume;
 }
 
-/**
- * First-order effect definitions.
- * @param {T} T Generic type parameter for effects that allow polymorphism.
- * Effects polymorphic in multiple type parameters should instead use a wrapper around `op`.
- */
-export interface FOEffects<T> {
+interface FOEffects<T> {
   io: FOEffect<() => T, T>;
   fail: FOEffect<undefined, never>;
   async: FOEffect<() => Promise<T>, T>;
   ndet: FOEffect<null | number | ReadonlyArray<unknown>, unknown>;
 }
 
-type BuiltinFOEffects = "io" | "fail" | "async" | "ndet";
-
-/**
- * Higher-order effect definitions.
- * @param {T} T Generic type parameter for higher-order effects that allow polymorphism.
- * Effects polymorphic in multiple type parameters should instead use a wrapper around `hOp`.
- */
-export interface HOEffects<T> {
-  parallel: HOEffect<
-    undefined,
-    { [K in keyof T]: Computation<any, any, T[K]> },
-    T
-  >;
-  foo: HOEffect<T, [AnyComputation], T>;
+interface HOEffects<T> {
+  parallel: HOEffect<void, { [K in keyof T]: T[K] }, T>;
+  foo: HOEffect<T, [T], T>;
 }
 
+type BuiltinFOEffects = "io" | "fail" | "async" | "ndet";
 type AllFOEffects = keyof FOEffects<any>;
 type AllHOEffects = keyof HOEffects<any>;
+type SubHOEffects = readonly AllHOEffects[];
+type SubFOEffects = readonly AllFOEffects[];
 type AllEffects = AllHOEffects | AllFOEffects;
 
-/**
- * A computation to be handled, elaborated, or uun.
- * @param {HO} HO Union of higher-order effect names.
- * @param {FO} FO Union of first-order effect names.
- * @param {A} A Result type of the computation.
- */
+type SubComputationEntry = {
+  readonly subHO: SubHOEffects;
+  readonly subFO: SubFOEffects;
+};
+
+type SubComputationMap = {
+  readonly [Name in AllHOEffects]?: SubComputationEntry;
+};
 
 interface Computation<
   HO extends AllHOEffects = never,
   FO extends AllFOEffects = never,
   A = unknown,
 > {
-  /** @internal */
   readonly [ComputationBrand]: {
     readonly hoEffects: HO;
     readonly foEffects: FO;
@@ -92,325 +56,264 @@ interface Computation<
   };
 }
 
-export type AnyComputation = Computation<any, any, any>;
+type AnyComputation = Computation<any, any, any>;
+type Pure<A> = Computation<never, never, A>;
+type FOComputation<FO extends AllFOEffects, A> = Computation<never, FO, A>;
+type DoGenerator<
+  HO extends AllHOEffects,
+  FO extends AllFOEffects,
+  A,
+> = Generator<Computation<HO, FO, any>, A, any>;
 
-/** A computation without effects. */
-export type Pure<A> = Computation<never, never, A>;
-
-/** Extract the higher-order effect row from a computation type. */
-export type HOEffectsOf<C> =
-  C extends Computation<infer HO, any, any> ? HO : never;
-
-/** Extract the first-order effect row from a computation type. */
-export type FOEffectsOf<C> =
-  C extends Computation<any, infer FO, any> ? FO : never;
-
-export type AllEffectsOf<C> =
+type HOEffectsOf<C> = C extends Computation<infer HO, any, any> ? HO : never;
+type FOEffectsOf<C> = C extends Computation<any, infer FO, any> ? FO : never;
+type AllEffectsOf<C> =
   C extends Computation<infer HO, infer FO, any> ? HO | FO : never;
+type ResultOf<C> = C extends Computation<any, any, infer A> ? A : never;
 
-/** Extract the result type from a computation type. */
-export type ResultOf<C> = C extends Computation<any, any, infer A> ? A : never;
-
-/**
- * Asserts that computation `C` carries every effect in the union `E`.
- * the registries. Evaluates to `C` on success, `never` on failure.
- *
- * @example
- *   function needsState<HO extends string, FO extends string, A>(
- *     c: Has<Computation<HO, FO, A>, "io" | "state">
- *   ): void {}
- */
-export type Has<C extends Computation<any, any, any>, E extends AllEffects> =
+type Has<C extends Computation<any, any, any>, E extends AllEffects> =
   Exclude<E, Extract<AllEffectsOf<C>, E>> extends never ? C : never;
 
-/**
- * A computation that carries only first-order effects.
- */
-export type FOComputation<FO extends AllFOEffects, A> = Computation<
-  never,
-  FO,
-  A
->;
-
-/** Lifts a value into a computation. */
-export declare function ret<A>(value: A): Pure<A>;
-
-export declare function op<Name extends AllFOEffects, T>(
-  effect: Name,
-  payload: FOPayloadOf<Name, T>,
-): Computation<never, Name, FOResumeOf<Name, T>>;
-
-export declare function hOp<Name extends AllHOEffects, T>(
-  effect: Name,
-  payload: HOResumeOf<Name, T>,
-  subcomputations: HOSubComputationsOf<Name, T>,
-): Computation<Name, never, HOResumeOf<Name, T>>;
-
-/** Binds the output of the first computation to the given function. */
-export declare function seq<
-  HO1 extends AllHOEffects,
-  FO1 extends AllFOEffects,
-  A,
-  HO2 extends AllHOEffects,
-  FO2 extends AllFOEffects,
-  B,
->(
-  current: Computation<HO1, FO1, A>,
-  then: (value: A) => Computation<HO2, FO2, B>,
-): Computation<HO1 | HO2, FO1 | FO2, B>;
-
-export type ApplyReturnTransform<F, A> = F extends undefined
-  ? A
-  : F extends (x: _) => Computation<any, any, infer B>
-    ? Substitute<B, _, A>
-    : A;
-
 type FOPayloadOf<Name extends AllFOEffects, T> = FOEffects<T>[Name]["payload"];
-
 type FOResumeOf<Name extends AllFOEffects, T> = FOEffects<T>[Name]["resume"];
-
-type FOHandlerOf<Name extends AllFOEffects, T> = (
-  payload: FOPayloadOf<Name, T>,
-  resume: Resume<FOResumeOf<Name, T>>,
-) => AnyComputation;
-
 type HOPayloadOf<Name extends AllHOEffects, T> = HOEffects<T>[Name]["payload"];
-
-type HOSubComputationsOf<
+type HOSubResultsOf<
   Name extends AllHOEffects,
   T,
-> = HOEffects<T>[Name]["subcomputations"];
-
+> = HOEffects<T>[Name]["results"];
 type HOResumeOf<Name extends AllHOEffects, T> = HOEffects<T>[Name]["resume"];
+type MapComputation<T> = {
+  readonly [K in keyof T]: Computation<any, any, T[K]>;
+};
+type HOSubComputationsOf<Name extends AllHOEffects, T> = MapComputation<
+  HOSubResultsOf<Name, T>
+>;
 
-type HOElaboratorOf<Name extends AllHOEffects, T> = (
-  payload: HOPayloadOf<Name, T>,
-  subcomputations: HOSubComputationsOf<Name, T>,
-  resume: HOResumeOf<Name, T>,
-) => AnyComputation;
+type MergeSubComputations<A, B> = (A extends {
+  readonly [SubComputationBrand]: infer subA;
+}
+  ? subA
+  : {}) &
+  (B extends { readonly [SubComputationBrand]: infer subB } ? subB : {});
 
-type CoercePure<C extends Computation<any, any, any>> =
-  C extends Computation<never, never, infer A> ? Pure<A> : C;
-
-type CoerceComputation<T> =
-  T extends Computation<never, never, infer A>
-    ? Pure<A>
-    : T extends Computation<infer HO, infer FO, infer A>
-      ? Computation<HO, FO, A>
-      : T;
-
-type ReplaceInTuple<T extends any[], TReplace, TWith> = T extends []
-  ? []
-  : T extends [infer Head, ...infer Tail]
-    ? [
-        Substitute<Head, TReplace, TWith>,
-        ...ReplaceInTuple<Tail, TReplace, TWith>,
-      ]
-    : { [K in keyof T]: Substitute<T[K], TReplace, TWith> };
-
-type Substitute<T, TReplace, TWith> = T extends TReplace
-  ? TWith | Exclude<T, TReplace>
-  : T extends Computation<infer HO, infer FO, infer A>
-    ? Computation<HO, FO, Substitute<A, TReplace, TWith>>
-    : T extends (...args: infer Args) => infer R
-      ? (
-          ...args: ReplaceInTuple<
-            Args extends any[] ? Args : never,
-            TReplace,
-            TWith
-          >
-        ) => Substitute<R, TReplace, TWith>
-      : { [P in keyof T]: Substitute<T[P], TReplace, TWith> };
-
-export interface RunHandler<
-  HandledEffects extends AllFOEffects,
-  IntroducedHOEffects extends FOIntroductionRecord,
-  IntroducedFOEffects extends FOIntroductionRecord,
-  Transform,
-> {
-  run<HO extends AllHOEffects, FO extends AllFOEffects, A>(
-    this: void,
-    computation: Computation<HO, FO, A>,
-  ): CoercePure<
-    Computation<
-      HO | ArrayUnion<IntroducedHOEffects["record"][FO]>,
-      | Exclude<FO, HandledEffects>
-      | ArrayUnion<IntroducedFOEffects["record"][FO]>,
-      ApplyReturnTransform<Transform, A>
-    >
+type Sequence<Current, Then> = Computation<
+  HOEffectsOf<Current> | HOEffectsOf<ReturnType<Then>>,
+  FOEffectsOf<Current> | FOEffectsOf<ReturnType<Then>>,
+  ResultOf<ReturnType<Then>>
+> & {
+  readonly [SubComputationBrand]: MergeSubComputations<
+    Current,
+    ReturnType<Then>
   >;
-}
-
-export interface RunElaborator<
-  ElaboratedEffects extends AllHOEffects,
-  IntroducedHOEffects extends HOIntroductionRecord,
-  IntroducedFOEffects extends HOIntroductionRecord,
-> {
-  run<HO extends AllHOEffects, FO extends AllFOEffects, A>(
-    this: void,
-    computation: Computation<HO, FO, A>,
-  ): Computation<
-    | Exclude<HO, ElaboratedEffects>
-    | ArrayUnion<
-        IntroducedHOEffects["record"][HO extends unknown
-          ? keyof HOEffects<any>
-          : HO]
-      >,
-    | FO
-    | ArrayUnion<
-        IntroducedFOEffects["record"][HO extends unknown
-          ? keyof HOEffects<any>
-          : HO]
-      >,
-    A
-  >;
-}
-
-interface FOIntroductionRecord {
-  record: Record<AllFOEffects, any[]>;
-  [FORecordBrand]: typeof FORecordBrand;
-}
-type HOIntroductionRecord = {
-  record: Record<AllHOEffects, any[]>;
-  [HORecordBrand]: typeof HORecordBrand;
 };
 
-type FOKeyAdd<
-  R extends FOIntroductionRecord,
-  K extends AllFOEffects,
-  V extends AllEffects,
-> = K extends keyof FOIntroductionRecord
-  ? {
-      [Name in keyof R]: K extends Name
-        ? R[Name] extends Array<infer A>
-          ? [...A[], V]
-          : never
-        : R[Name];
-    }
-  : R & { [key in K]: [] };
+interface HandlerHKT {
+  readonly computationReturn: unknown;
+  readonly continuation: Computation<any, any, unknown>;
+}
 
-type FOKeyAddAll<R extends FOIntroductionRecord, V extends AllFOEffects> = {
-  record: {
-    [Name in keyof R["record"]]: R["record"][Name] extends Array<infer A>
-      ? [...A[], V]
-      : never;
-  };
-  [FORecordBrand]: typeof FORecordBrand;
-};
+interface ElaboratorHKT {
+  readonly computationReturn: unknown;
+  readonly higherOrderEffects: SubHOEffects;
+  readonly firstOrderEffects: SubFOEffects;
+  readonly continuation: Computation<any, any, unknown>;
+}
 
-type HOKeyAddAll<R extends HOIntroductionRecord, V extends AllHOEffects> = {
-  record: {
-    [Name in keyof R["record"]]: R["record"][Name] extends Array<infer A>
-      ? [...A[], V]
-      : never;
-  };
-  [HORecordBrand]: typeof HORecordBrand;
-};
+type ApplyHandlerHKT<F, Return, Continuation> = F extends {
+  readonly type: unknown;
+}
+  ? (F & {
+      readonly computationReturn: Return;
+      readonly continuation: Continuation;
+    })["type"]
+  : never;
 
-type HOKeyAdd<
-  R extends HOIntroductionRecord,
-  K extends AllHOEffects,
-  V extends AllEffects,
-> = K extends keyof HOEffects<any>
-  ? K extends keyof HOIntroductionRecord
+type ApplyElaboratorHKT<F, Return, HO, FO, Continuation> = F extends {
+  readonly type: unknown;
+}
+  ? (F & {
+      readonly computationReturn: Return;
+      readonly higherOrderEffects: HO;
+      readonly firstOrderEffects: FO;
+      readonly continuation: Continuation;
+    })["type"]
+  : never;
+
+type TransformHandlerReturn<HKT extends HandlerHKT, A> =
+  ApplyHandlerHKT<HKT, A, Pure<A>> extends { return: (x: A) => infer R }
+    ? R extends Computation<any, any, infer B>
+      ? B
+      : R
+    : A;
+
+type HandledEffectsFromHKT<HKT extends HandlerHKT> =
+  ApplyHandlerHKT<HKT, unknown, unknown> extends infer H
+    ? { [K in keyof H]: K extends AllFOEffects ? K : never }[keyof H]
+    : never;
+
+type ElaboratedEffectsFromHKT<HKT extends ElaboratorHKT> =
+  ApplyElaboratorHKT<HKT, unknown, unknown, unknown, unknown> extends infer H
+    ? { [K in keyof H]: K extends AllHOEffects ? K : never }[keyof H]
+    : never;
+
+type IntroducedFOEffectsFromHandlerHKTFor<
+  HKT extends HandlerHKT,
+  FOs extends AllFOEffects,
+> =
+  ApplyHandlerHKT<HKT, unknown, unknown> extends infer H
     ? {
-        [Name in keyof R]: K extends Name
-          ? R[Name] extends Array<infer A>
-            ? [...A[], V]
+        [K in keyof H]: K extends FOs
+          ? ReturnType<H[K]> extends Computation<any, infer FO, any>
+            ? FO
             : never
-          : R[Name];
-      }
-    : R & { [key in K]: [] }
-  : never;
+          : never;
+      }[keyof H]
+    : never;
 
-type ArrayUnion<Arr extends any[]> = Arr extends [...infer Tail, infer Head]
-  ? Head | ArrayUnion<Tail>
-  : never;
+type IntroducedHOEffectsFromHandlerHKTFor<
+  HKT extends HandlerHKT,
+  FOs extends AllFOEffects,
+> =
+  ApplyHandlerHKT<HKT, unknown, unknown> extends infer H
+    ? {
+        [K in keyof H]: K extends FOs
+          ? ReturnType<H[K]> extends Computation<infer HO, any, any>
+            ? HO
+            : never
+          : never;
+      }[keyof H]
+    : never;
 
-export declare class Handler<
-  HandledEffects extends AllFOEffects = never,
-  IntroducedHOEffects extends FOIntroductionRecord = FOIntroductionRecord,
-  IntroducedFOEffects extends FOIntroductionRecord = FOIntroductionRecord,
-  Transform = undefined,
-> {
-  handle<Name extends AllFOEffects, T = unknown>(
-    effect: Name,
-    handler: FOHandlerOf<Name, T>,
-  ): Handler<
-    HandledEffects | Name,
-    ReturnType<typeof handler> extends Computation<infer HO, any, any>
-      ? FOKeyAdd<IntroducedHOEffects, Name, HO>
-      : never,
-    ReturnType<typeof handler> extends Computation<any, infer FO, any>
-      ? FOKeyAdd<IntroducedFOEffects, Name, FO>
-      : never,
-    Transform
-  >;
-
-  mapReturn<F extends (x: any) => Computation<any, any, any>>(
-    f: F,
-  ): Handler<
-    HandledEffects,
-    FOKeyAddAll<IntroducedHOEffects, HOEffectsOf<ReturnType<F>>>,
-    FOKeyAddAll<IntroducedFOEffects, FOEffectsOf<ReturnType<F>>>,
-    F
-  >;
-
-  build(): RunHandler<
-    HandledEffects,
-    IntroducedHOEffects,
-    IntroducedFOEffects,
-    Transform
-  >;
-}
-
-export declare class Elaborator<
-  ElaboratedEffects extends AllHOEffects = never,
-  IntroducedHOEffects extends HOIntroductionRecord = never,
-  IntroducedFOEffects extends HOIntroductionRecord = never,
-> {
-  elaborate<Name extends AllHOEffects, T>(
-    effect: Name,
-    elaborator: HOElaboratorOf<Name, T>,
-  ): Elaborator<
-    ElaboratedEffects | Name,
-    ReturnType<typeof elaborator> extends Computation<infer HO, any, any>
-      ? HOKeyAdd<IntroducedHOEffects, Name, HO>
-      : never,
-    ReturnType<typeof elaborator> extends Computation<any, infer FO, any>
-      ? HOKeyAdd<IntroducedFOEffects, Name, FO>
+type IntroducedHOEffectsFromHandlerReturn<HKT extends HandlerHKT> =
+  ApplyHandlerHKT<HKT, unknown, unknown> extends infer H
+    ? "return" extends keyof H
+      ? ReturnType<H["return"]> extends Computation<infer HO, any, any>
+        ? HO
+        : never
       : never
-  >;
+    : never;
 
-  build(): RunElaborator<
-    ElaboratedEffects,
-    IntroducedHOEffects,
-    IntroducedFOEffects
-  >;
+type IntroducedFOEffectsFromHandlerReturn<HKT extends HandlerHKT> =
+  ApplyHandlerHKT<HKT, unknown, unknown> extends infer H
+    ? "return" extends keyof H
+      ? ReturnType<H["return"]> extends Computation<any, infer FO, any>
+        ? FO
+        : never
+      : never
+    : never;
+
+type IntroducedFOEffectsFromElaboratorHKTFor<
+  HKT extends ElaboratorHKT,
+  SubHO extends SubHOEffects,
+  SubFO extends SubFOEffects,
+  HOs extends AllHOEffects,
+> =
+  ApplyElaboratorHKT<HKT, unknown, SubHO, SubFO, unknown> extends infer H
+    ? {
+        [K in keyof H]: K extends HOs
+          ? ReturnType<H[K]> extends Computation<any, infer FO, any>
+            ? FO
+            : never
+          : never;
+      }[keyof H]
+    : never;
+
+type IntroducedHOEffectsFromElaboratorHKTFor<
+  HKT extends ElaboratorHKT,
+  HORow extends SubHOEffects,
+  FORow extends SubFOEffects,
+  HOs extends AllHOEffects,
+> =
+  ApplyElaboratorHKT<HKT, unknown, HORow, FORow, unknown> extends infer H
+    ? {
+        [K in keyof H]: K extends HOs
+          ? ReturnType<H[K]> extends Computation<infer HO, any, any>
+            ? HO
+            : never
+          : never;
+      }[keyof H]
+    : never;
+
+type ExtractSubEntry<C, Name extends AllHOEffects> = C extends {
+  readonly [SubComputationBrand]: infer SubMap;
 }
+  ? Name extends keyof SubMap
+    ? SubMap[Name] extends SubComputationEntry
+      ? SubMap[Name]
+      : { subHO: SubHOEffects; subFO: SubFOEffects }
+    : { subHO: SubHOEffects; subFO: SubFOEffects }
+  : { subHO: SubHOEffects; subFO: SubFOEffects };
+
+type WithHandler<
+  HKT extends HandlerHKT,
+  C extends AnyComputation,
+> = Computation<
+  | HOEffectsOf<C>
+  | IntroducedHOEffectsFromHandlerHKTFor<HKT, FOEffectsOf<C>>
+  | IntroducedHOEffectsFromHandlerReturn<HKT>,
+  | Exclude<FOEffectsOf<C>, HandledEffectsFromHKT<HKT>>
+  | IntroducedFOEffectsFromHandlerHKTFor<HKT, FOEffectsOf<C>>
+  | IntroducedFOEffectsFromHandlerReturn<HKT>,
+  TransformHandlerReturn<HKT, ResultOf<C>>
+>;
+
+type WithElaborator<
+  HKT extends ElaboratorHKT,
+  C extends AnyComputation,
+> = Computation<
+  | Exclude<HOEffectsOf<C>, ElaboratedEffectsFromHKT<HKT>>
+  | IntroducedHOEffectsFromElaboratorHKTFor<
+      HKT,
+      ExtractSubEntry<C, HOEffectsOf<C>>["subHO"],
+      ExtractSubEntry<C, HOEffectsOf<C>>["subFO"],
+      HOEffectsOf<C>
+    >,
+  | FOEffectsOf<C>
+  | IntroducedFOEffectsFromElaboratorHKTFor<
+      HKT,
+      ExtractSubEntry<C, HOEffectsOf<C>>["subHO"],
+      ExtractSubEntry<C, HOEffectsOf<C>>["subFO"],
+      HOEffectsOf<C>
+    >,
+  ResultOf<C>
+>;
+
+type ZipAll<SubHO extends SubHOEffects, SubFO extends SubFOEffects, T> = {
+  readonly [K in keyof SubHO]: K extends keyof SubFO
+    ? Computation<SubHO[K], SubFO[K], T>
+    : never;
+};
+
+type TupleOfLength<
+  N extends number,
+  T,
+  Acc extends readonly [T, ...T[]] = readonly [T],
+> = Acc["length"] extends N ? Acc : TupleOfLength<N, T, readonly [...Acc, T]>;
+
+type ZipN<
+  N extends number,
+  SubHO extends SubHOEffects,
+  SubFO extends SubFOEffects,
+  T,
+> = MapC<SubHO, SubFO, TupleOfLength<N, never>, T>;
+
+type MapC<SubHO extends SubHOEffects, SubFO extends SubFOEffects, Tup, T> = {
+  [K in keyof Tup]: K extends keyof SubHO & keyof SubFO
+    ? Computation<SubHO[K] & AllHOEffects, SubFO[K] & AllFOEffects, T>
+    : never;
+};
 
 type Contra<T> = T extends any ? (arg: T) => void : never;
-
 type Cov<T> = T extends any ? () => T : never;
-
 type InferCov<T> = [T] extends [() => infer I] ? I : never;
-
 type InferContra<T> = [T] extends [(arg: infer I) => void] ? I : never;
-
 type PickOne<T> = InferContra<InferContra<Contra<Contra<T>>>>;
-
 type UnionToTuple<T> =
   PickOne<T> extends infer U
     ? Exclude<T, U> extends never
       ? [T]
       : [...UnionToTuple<Exclude<T, U>>, U]
     : never;
-
-type AllEffectsHandled<HO, FO> = HO extends never
-  ? Exclude<FO, BuiltinFOEffects> extends never
-    ? true
-    : false
-  : false;
 
 type FormatUnion<U extends string> = UnionToTuple<U>;
 type TupleToString<A extends string[]> = A extends [
@@ -429,11 +332,24 @@ type FormatFO<FO extends AllFOEffects> =
     ? ""
     : TupleToString<FormatUnion<Exclude<FO, BuiltinFOEffects>> & string[]>;
 
-// Clean up type names
-type UnhandledEffectError<
-  HO extends AllHOEffects,
-  FO extends AllFOEffects,
-> = `Unhandled higher-order effects: [${TupleToString<FormatUnion<HO & string> & string[]>}] | Unhandled first-order effects: [${FormatFO<FO>}]`;
+type UnhandledEffectError<HO extends AllHOEffects, FO extends AllFOEffects> =
+  FormatUnion<FO> extends string[]
+    ? FormatUnion<HO> extends string[]
+      ? [HO] extends [never]
+        ? [FO] extends [never]
+          ? never
+          : `Unhandled first-order effects: [${TupleToString<FormatUnion<FO>>}]`
+        : [FO] extends [never]
+          ? `Unhandled first-order effects: [${TupleToString<FormatUnion<HO>>}]`
+          : `Unhandled higher-order effects: [${TupleToString<FormatUnion<HO>>}] | Unhandled first-order effects: [${TupleToString<FormatUnion<FO>>}]`
+      : never
+    : never;
+
+type AllEffectsHandled<HO, FO> = HO extends never
+  ? Exclude<FO, BuiltinFOEffects> extends never
+    ? true
+    : false
+  : false;
 
 type RuntimeResult<FO extends AllFOEffects, A> = "async" extends FO
   ? Promise<A>
@@ -441,37 +357,95 @@ type RuntimeResult<FO extends AllFOEffects, A> = "async" extends FO
     ? A[]
     : A;
 
-export declare function run<
-  HO extends AllHOEffects,
-  FO extends AllFOEffects,
-  A,
+declare function ret<A>(value: A): Pure<A>;
+
+declare function op<Name extends AllFOEffects, T>(
+  effect: Name,
+  payload: FOPayloadOf<Name, T>,
+): Computation<never, Name, FOResumeOf<Name, T>>;
+
+declare function hOp<
+  Name extends AllHOEffects,
+  T,
+  SubHO extends SubHOEffects,
+  SubFO extends SubFOEffects,
 >(
+  effect: Name,
+  payload: HOPayloadOf<Name, T>,
+  subcomputations: ZipAll<SubHO, SubFO, T>,
+): Computation<Name, never, HOResumeOf<Name, T>> & {
+  readonly [SubComputationBrand]: {
+    readonly [K in Name]: { subHO: SubHO; subFO: SubFO };
+  };
+};
+
+declare function seq<Current, Then extends (value: ResultOf<Current>) => any>(
+  current: Current,
+  then: Then,
+): Sequence<Current, Then>;
+
+declare function handles<Name extends AllFOEffects>(
+  effect: Name,
+): (
+  target: any,
+  propertyKey: string,
+  descriptor: TypedPropertyDescriptor<
+    (
+      payload: FOPayloadOf<Name, unknown>,
+      resume: (value: FOResumeOf<Name, any>) => any,
+    ) => AnyComputation
+  >,
+) => void;
+
+declare function elaborates<Name extends AllHOEffects>(
+  effect: Name,
+): (
+  target: any,
+  propertyKey: string,
+  descriptor: TypedPropertyDescriptor<
+    (
+      payload: HOPayloadOf<Name, any>,
+      subcomputations: readonly any[],
+      resume: (value: HOResumeOf<Name, any>) => any,
+    ) => AnyComputation
+  >,
+) => void;
+
+declare function withHandler<HKT extends HandlerHKT>(
+  handler: ApplyHandlerHKT<HKT, any, any>,
+): {
+  run<C extends AnyComputation>(computation: C): WithHandler<HKT, C>;
+};
+
+declare function withElaborator<HKT extends ElaboratorHKT>(
+  handler: ApplyElaboratorHKT<HKT, any, any, any, any>,
+): {
+  run<C extends AnyComputation>(computation: C): WithElaborator<HKT, C>;
+};
+
+declare function run<HO extends AllHOEffects, FO extends AllFOEffects, A>(
   computation: Computation<HO, FO, A>,
 ): AllEffectsHandled<HO, FO> extends true
   ? RuntimeResult<FO, A>
-  : UnhandledEffectError<HO, FO>;
+  : UnhandledEffectError<HO, Exclude<FO, BuiltinFOEffects>>;
 
-export declare function pipe<A>(a: A): A;
-export declare function pipe<A, B>(a: A, ab: (a: A) => B): B;
-export declare function pipe<A, B, C>(
-  a: A,
-  ab: (a: A) => B,
-  bc: (b: B) => C,
-): C;
-export declare function pipe<A, B, C, D>(
+declare function pipe<A>(a: A): A;
+declare function pipe<A, B>(a: A, ab: (a: A) => B): B;
+declare function pipe<A, B, C>(a: A, ab: (a: A) => B, bc: (b: B) => C): C;
+declare function pipe<A, B, C, D>(
   a: A,
   ab: (a: A) => B,
   bc: (b: B) => C,
   cd: (c: C) => D,
 ): D;
-export declare function pipe<A, B, C, D, E>(
+declare function pipe<A, B, C, D, E>(
   a: A,
   ab: (a: A) => B,
   bc: (b: B) => C,
   cd: (c: C) => D,
   de: (d: D) => E,
 ): E;
-export declare function pipe<A, B, C, D, E, F>(
+declare function pipe<A, B, C, D, E, F>(
   a: A,
   ab: (a: A) => B,
   bc: (b: B) => C,
@@ -479,7 +453,7 @@ export declare function pipe<A, B, C, D, E, F>(
   de: (d: D) => E,
   ef: (e: E) => F,
 ): F;
-export declare function pipe<A, B, C, D, E, F, G>(
+declare function pipe<A, B, C, D, E, F, G>(
   a: A,
   ab: (a: A) => B,
   bc: (b: B) => C,
@@ -488,7 +462,7 @@ export declare function pipe<A, B, C, D, E, F, G>(
   ef: (e: E) => F,
   fg: (f: F) => G,
 ): G;
-export declare function pipe<A, B, C, D, E, F, G, H>(
+declare function pipe<A, B, C, D, E, F, G, H>(
   a: A,
   ab: (a: A) => B,
   bc: (b: B) => C,
@@ -498,7 +472,7 @@ export declare function pipe<A, B, C, D, E, F, G, H>(
   fg: (f: F) => G,
   gh: (g: G) => H,
 ): H;
-export declare function pipe<A, B, C, D, E, F, G, H, I>(
+declare function pipe<A, B, C, D, E, F, G, H, I>(
   a: A,
   ab: (a: A) => B,
   bc: (b: B) => C,
@@ -509,7 +483,7 @@ export declare function pipe<A, B, C, D, E, F, G, H, I>(
   gh: (g: G) => H,
   hi: (h: H) => I,
 ): I;
-export declare function pipe<A, B, C, D, E, F, G, H, I, J>(
+declare function pipe<A, B, C, D, E, F, G, H, I, J>(
   a: A,
   ab: (a: A) => B,
   bc: (b: B) => C,
@@ -522,14 +496,54 @@ export declare function pipe<A, B, C, D, E, F, G, H, I, J>(
   ij: (i: I) => J,
 ): J;
 
-export type DoGenerator<
-  HO extends AllHOEffects,
-  FO extends AllFOEffects,
-  A,
-> = Generator<Computation<HO, FO, any>, A, any>;
+declare function do_<HO extends AllHOEffects, FO extends AllFOEffects, A>(
+  genFn: () => DoGenerator<HO, FO, A>,
+): Computation<HO, FO, A>;
 
-export declare function do_<
-  HO extends AllHOEffects,
-  FO extends AllFOEffects,
-  A,
->(genFn: () => DoGenerator<HO, FO, A>): Computation<HO, FO, A>;
+export {
+  ret,
+  op,
+  hOp,
+  seq,
+  handles,
+  elaborates,
+  withHandler,
+  withElaborator,
+  run,
+  pipe,
+  do_,
+};
+
+export type {
+  FOEffect,
+  HOEffect,
+  SubFOEffects,
+  SubHOEffects,
+  AllFOEffects,
+  AllHOEffects,
+  AllEffects,
+  SubComputationEntry,
+  SubComputationMap,
+  Computation,
+  AnyComputation,
+  Pure,
+  FOComputation,
+  DoGenerator,
+  HOEffectsOf,
+  FOEffectsOf,
+  AllEffectsOf,
+  ResultOf,
+  Has,
+  FOPayloadOf,
+  FOResumeOf,
+  HOPayloadOf,
+  HOSubResultsOf,
+  HOResumeOf,
+  Sequence,
+  HandlerHKT,
+  ElaboratorHKT,
+  WithHandler,
+  WithElaborator,
+  ZipAll,
+  ZipN,
+};

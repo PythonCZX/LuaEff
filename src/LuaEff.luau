@@ -44,24 +44,14 @@ export type ContPair        = { l: Cont, r: Cont }
 export type Cont            = ContFunc | ContPair | nil
 export type SubComputations = { Node }
 
-local HandlerBuilder = {}
-HandlerBuilder.__index = HandlerBuilder
-export type HandlerBuilder = typeof(setmetatable(
-	{} :: {
-		_methods: { [i32]: (any, (any) -> Node) -> Node },
-    _ret: ((any) -> Node)?
-	},
-	HandlerBuilder
-))
+export type Handler = {
+    ["return"]: ((any) -> Node)?,
+    methods: { [number]: (Handler, any, ContFunc) -> Node }
+  }
 
-local ElaboratorBuilder = {}
-ElaboratorBuilder.__index = ElaboratorBuilder
-export type ElaboratorBuilder = typeof(setmetatable(
-	{} :: {
-    _methods: { [i32]: (any, SubComputations?, (any) -> Node) -> Node },
-	},
-	ElaboratorBuilder
-))
+export type Elaborator = {
+  methods: { [number]: (Elaborator, any, SubComputations?, ContFunc) -> Node}
+}
 
 local TAG_RET        = 0
 local TAG_EFF        = 1
@@ -235,34 +225,35 @@ local function seq(node: Node, k: ContFunc): Node
 	return mkEff(e.eid, e.payload, concatK(e.k, k), e.s) :: Node
 end
 
-function HandlerBuilder.new(): HandlerBuilder
-	local self = setmetatable({
-		_methods = {},
-		_ret = nil,
-	}, HandlerBuilder)
-	return self :: HandlerBuilder
-end
-
-function HandlerBuilder.handle(self: HandlerBuilder, name: string, handler: (any, (any) -> Node) -> Node)
-	local id = effectNameToId[name]
-	if id == nil then
-		_nid += 1
-		id = _nid
-		idToEffectName[id] = name
-		effectNameToId[name] = id
+local function handles(name: string)
+	return function(target: Handler, propertyKey: string, descriptor)
+		local id = effectNameToId[name]
+		if id == nil then
+			_nid += 1
+			id = _nid
+			idToEffectName[id] = name
+			effectNameToId[name] = id
+		end
+		table.insert(target.methods, target.methods[id])
 	end
-	self._methods[id] = handler
-	return self
 end
 
-function HandlerBuilder.mapReturn(self: HandlerBuilder, map: (any) -> Node)
-	self._ret = map
-	return self
+local function elaborates(name: string)
+	return function(target: Handler, propertyKey: string, descriptor)
+		local id = hoEffectNameToId[name]
+		if id == nil then
+			_hoNid -= 1
+			id = _hoNid
+			hoIdToEffectName[-id] = name
+			hoEffectNameToId[name] = id
+		end
+		table.insert(target.methods, target.methods[id])
+	end
 end
 
-function HandlerBuilder.build(self: HandlerBuilder): { run: (Node) -> Node }
-	local methods = self._methods
-	local rf = self._ret
+local function withHandler(handler: Handler): { run: (Node) -> Node }
+	local methods = handler.methods
+	local rf = handler["return"]
 
 	local function step(n: Node, pass: boolean): Node
 		while true do
@@ -281,7 +272,7 @@ function HandlerBuilder.build(self: HandlerBuilder): { run: (Node) -> Node }
 				local resume = function(v: any): Node
 					return step(runK(k, v), false)
 				end
-				local result: Node = m(e.payload, resume)
+				local result: Node = m(handler, e.payload, resume)
 				if result.tag == TAG_EFF then
 					n = result
 					pass = true
@@ -305,24 +296,8 @@ function HandlerBuilder.build(self: HandlerBuilder): { run: (Node) -> Node }
 	}
 end
 
-function ElaboratorBuilder.new()
-	local self = setmetatable({
-		_methods = {},
-	}, ElaboratorBuilder)
-	return self :: ElaboratorBuilder
-end
-
-function ElaboratorBuilder.elaborate(
-	self: ElaboratorBuilder,
-	name: string,
-	elaborator: (any, SubComputations?, (any) -> Node) -> Node
-)
-	self._methods[hoEffectNameToId[name]] = elaborator
-	return self
-end
-
-function ElaboratorBuilder.build(self: ElaboratorBuilder): { run: (Node) -> Node }
-	local methods = self._methods
+local function withElaborator(elaborator: Elaborator): { run: (Node) -> Node }
+	local methods = elaborator.methods
 
 	local function elaborate(node: Node): Node
 		while true do
@@ -345,7 +320,7 @@ function ElaboratorBuilder.build(self: ElaboratorBuilder): { run: (Node) -> Node
 			end
 
 			if m then
-				local result: Node = m(e.payload, s, resume)
+				local result: Node = m(elaborator, e.payload, s, resume)
 				if result.tag == TAG_EFF then
 					node = result
 					continue
@@ -483,9 +458,13 @@ return table_freeze({
 	-- sequencing
 	seq = seq,
 
-	-- Builders
-	Handler = HandlerBuilder,
-	Elaborator = ElaboratorBuilder,
+	-- Handlers/Elaborators
+	withHandler = withHandler,
+	withElaborator = withElaborator,
+
+	-- Decorators
+	handles = handles,
+	elaborates = elaborates,
 
 	-- Runtime
 	run = run,
