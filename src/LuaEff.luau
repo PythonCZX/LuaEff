@@ -45,12 +45,21 @@ export type Cont            = ContFunc | ContPair | nil
 export type SubComputations = { Node }
 
 export type Handler = {
-    ["return"]: ((any) -> Node)?,
-    methods: { [number]: (Handler, any, ContFunc) -> Node }
+    ["return"]: ((Handler, any) -> Node)?,
+    methods: { [number]: (Handler, any, ContFunc) -> Node },
+    [string]: (Handler, any, ContFunc) -> Node 
   }
 
 export type Elaborator = {
-  methods: { [number]: (Elaborator, any, SubComputations?, ContFunc) -> Node}
+  methods: { [number]: (Elaborator, any, SubComputations?, ContFunc) -> Node},
+  [string]: (Elaborator, any, SubComputations?, ContFunc) -> Node 
+}
+
+type _FiberCtx = {
+    results : { any },
+    pending : i32,
+    resolve : ({ any }) -> (),
+    reject  : (any)    -> (),
 }
 
 local TAG_RET        = 0
@@ -234,12 +243,13 @@ local function handles(name: string)
 			idToEffectName[id] = name
 			effectNameToId[name] = id
 		end
-		table.insert(target.methods, target.methods[id])
+		target.methods = target.methods or {}
+		target.methods[id] = target[propertyKey]
 	end
 end
 
 local function elaborates(name: string)
-	return function(target: Handler, propertyKey: string, descriptor)
+	return function(target: Elaborator, propertyKey: string, descriptor)
 		local id = hoEffectNameToId[name]
 		if id == nil then
 			_hoNid -= 1
@@ -247,7 +257,8 @@ local function elaborates(name: string)
 			hoIdToEffectName[-id] = name
 			hoEffectNameToId[name] = id
 		end
-		table.insert(target.methods, target.methods[id])
+		target.methods = target.methods or {}
+		target.methods[id] = target[propertyKey]
 	end
 end
 
@@ -259,12 +270,13 @@ local function withHandler(handler: Handler): { run: (Node) -> Node }
 		while true do
 			if n.tag == TAG_RET then
 				if not pass and rf then
-					return (rf :: (any) -> Node)((n :: RetNode).val)
+					return (rf :: (Handler, any) -> Node)(handler, (n :: RetNode).val)
 				end
 				return n
 			end
 
 			local e: EffNode = n :: EffNode
+			print("Eid is", e)
 			local m = methods[e.eid]
 			local k: Cont = e.k
 
@@ -336,6 +348,90 @@ local function withElaborator(elaborator: Elaborator): { run: (Node) -> Node }
 	return { run = elaborate }
 end
 
+local function _runFiber(initial: Node, ctx: _FiberCtx): ()
+	local cur: Node = initial
+	while true do
+		if cur.tag == TAG_RET then
+			local res = ctx.results
+			res[#res + 1] = (cur :: RetNode).val
+			local pending = ctx.pending - 1
+			ctx.pending = pending
+			if pending == 0 then
+				ctx.resolve(res)
+			end
+			return
+		end
+
+		local e: EffNode = cur :: EffNode
+		local eid: i32 = e.eid
+		local payload: any = e.payload
+		local k: Cont = e.k
+
+		if eid == EID_IO then
+			cur = runK(k, payload())
+		elseif eid == EID_FAIL then
+			-- Branch is pruned; just retire this fiber.
+			local pending = ctx.pending - 1
+			ctx.pending = pending
+			if pending == 0 then
+				ctx.resolve(ctx.results)
+			end
+			return
+		elseif eid == EID_ASYNC then
+			-- Suspend this fiber until the promise resolves.
+			payload():andThen(function(v: any)
+				_runFiber(runK(k, v), ctx)
+			end, ctx.reject)
+			return -- fiber is now suspended; do NOT decrement pending here
+		elseif eid == EID_NDET then
+			if payload == nil then
+				-- Boolean branch: current fiber → true, spawn false branch.
+				ctx.pending += 1
+				_runFiber(runK(k, false), ctx)
+				cur = runK(k, true)
+			elseif type(payload) == "table" then
+				local arr: { any } = payload :: { any }
+				local n: i32 = #arr
+				if n == 0 then
+					local pending = ctx.pending - 1
+					ctx.pending = pending
+					if pending == 0 then
+						ctx.resolve(ctx.results)
+					end
+					return
+				end
+				-- Current fiber → arr[1]; spawn arr[2..n].
+				ctx.pending += (n - 1)
+				for i = n, 2, -1 do
+					_runFiber(runK(k, arr[i]), ctx)
+				end
+				cur = runK(k, arr[1])
+			elseif type(payload) == "number" then
+				local cnt: i32 = payload :: i32
+				if cnt == 0 then
+					local pending = ctx.pending - 1
+					ctx.pending = pending
+					if pending == 0 then
+						ctx.resolve(ctx.results)
+					end
+					return
+				end
+				ctx.pending += (cnt - 1)
+				for i = cnt, 2, -1 do
+					_runFiber(runK(k, i), ctx)
+				end
+				cur = runK(k, 1)
+			else
+				ctx.reject("ndet: invalid parameter, expected nil, number, or table")
+				return
+			end
+		else
+			ctx.reject(`Unhandled effect: ${getEffectName(eid)}`)
+			return
+		end
+	end
+end
+
 local function run(node: Node): any
 	local cur: Node = node
 	local results: { any }? = nil
@@ -381,9 +477,40 @@ local function run(node: Node): any
 			brStack[bp] = nil
 			bp -= 1
 		elseif eid == EID_ASYNC then
-			return p():andThen(function(v: any)
-				return run(runK(k, v))
+			if results == nil then
+				return p():andThen(function(v: any)
+					return run(runK(k, v))
+				end)
+			end
+			local innerPromise = p()
+
+			local PromiseLib = getmetatable(innerPromise)
+			local brStack = br :: { any }
+
+			local ctx: _FiberCtx = {
+				results = results :: { any }, -- pre-populated with any sync results
+				pending = bp + 1,
+				resolve = nil :: any,
+				reject = nil :: any,
+			}
+
+			-- Create the outer promise FIRST so ctx.resolve is set before any
+			-- andThen callback could fire (matters for eagerly-resolved promises).
+			local outerPromise = PromiseLib.new(function(resolve: any, reject: any)
+				ctx.resolve = resolve
+				ctx.reject = reject
 			end)
+
+			innerPromise:andThen(function(v: any)
+				_runFiber(runK(k, v), ctx)
+			end, ctx.reject)
+
+			for i = 1, bp do
+				_runFiber(brStack[i] :: Node, ctx)
+				brStack[i] = nil
+			end
+
+			return outerPromise
 		elseif eid == EID_NDET then
 			if results == nil then
 				results = {} :: { any }
@@ -449,32 +576,6 @@ local function pipe(initial: any, ...: (any) -> any): any
 	return acc
 end
 
-local function generator(callback: (any) -> any)
-	local co = coroutine.create(callback)
-	return {
-		next = function(...)
-			if coroutine.status(co) == "dead" then
-				return { done = true }
-			else
-				local success, value = coroutine.resume(co, ...)
-				if success == false then
-					error(value, 2)
-				end
-				return {
-					value = value,
-					done = coroutine.status(co) == "dead",
-				}
-			end
-		end,
-	}
-end
-
-local function perform(computation)
-	return generator(function()
-		return coroutine.yield(computation)
-	end)
-end
-
 return table_freeze({
 	-- Node constructors
 	ret = ret,
@@ -498,5 +599,4 @@ return table_freeze({
 	-- Utilities
 	do_ = do_,
 	pipe = pipe,
-	perform = perform,
 })

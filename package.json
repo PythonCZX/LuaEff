@@ -2,7 +2,7 @@
   "name": "@rbxts/luaeff",
   "version": "1.0.0",
   "description": "Algebraic effects for Luau",
-  "main": "out/LuaEff.lua",
+  "main": "out/LuaEff.luau",
   "scripts": {
     "build": "rbxtsc",
     "watch": "rbxtsc -w",
