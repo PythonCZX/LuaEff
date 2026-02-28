@@ -561,11 +561,13 @@ local function run(node: Node): any
 			end
 		elseif eid == EID_APPLY then
 			local s = e.s
+			local subresults = {}
 			if s and #s > 0 then
-				task.desynchronize()
 				for i = 1, #s do
+					subresults[i] = run(s[i])
 				end
 			end
+			cur = runK(k, p(table.unpack(subresults)))
 		else
 			error(`Unhandled effect: ${getEffectName(eid)}`)
 		end
