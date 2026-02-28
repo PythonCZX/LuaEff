@@ -55,11 +55,17 @@ export type Elaborator = {
   [string]: (Elaborator, any, SubComputations?, ContFunc) -> Node 
 }
 
-type _FiberCtx = {
-    results : { any },
-    pending : i32,
-    resolve : ({ any }) -> (),
-    reject  : (any)    -> (),
+type _BranchCtx = {
+  results: { any },
+  pending: i32,
+  resolve: ({ any }) -> (),
+  reject: (any) -> (),
+}
+
+type _ApplyCtx = {
+  results: { any },
+  pending: number,
+
 }
 
 local TAG_RET        = 0
@@ -67,10 +73,11 @@ local TAG_EFF        = 1
 local table_create   = table.create
 local table_freeze   = table.freeze
 
-local EID_IO:    i32 = 1
-local EID_FAIL:  i32 = 2
-local EID_ASYNC: i32 = 3
-local EID_NDET:  i32 = 4
+local EID_APPLY: i32 = -1
+local EID_IO:    i32 =  1
+local EID_FAIL:  i32 =  2
+local EID_ASYNC: i32 =  3
+local EID_NDET:  i32 =  4
 
 local idToEffectName: { string } = {
   "io",
@@ -82,11 +89,16 @@ local effectNameToId: { [string]: number } = {}
 for i, name in idToEffectName do
   effectNameToId[name] = i
 end
-local hoIdToEffectName: { string } = {}
+local hoIdToEffectName: { string } = {
+  "apply",
+}
 local hoEffectNameToId: { [string]: number } = {}
+for i, name in hoIdToEffectName do
+  hoEffectNameToId[name] = i
+end
 
 local _nid: i32 = 4
-local _hoNid: i32 = 0
+local _hoNid: i32 = -1
 
 -- stylua: ignore end
 
@@ -276,7 +288,6 @@ local function withHandler(handler: Handler): { run: (Node) -> Node }
 			end
 
 			local e: EffNode = n :: EffNode
-			print("Eid is", e)
 			local m = methods[e.eid]
 			local k: Cont = e.k
 
@@ -348,7 +359,7 @@ local function withElaborator(elaborator: Elaborator): { run: (Node) -> Node }
 	return { run = elaborate }
 end
 
-local function _runFiber(initial: Node, ctx: _FiberCtx): ()
+local function _runBranch(initial: Node, ctx: _BranchCtx): ()
 	local cur: Node = initial
 	while true do
 		if cur.tag == TAG_RET then
@@ -380,14 +391,14 @@ local function _runFiber(initial: Node, ctx: _FiberCtx): ()
 		elseif eid == EID_ASYNC then
 			-- Suspend this fiber until the promise resolves.
 			payload():andThen(function(v: any)
-				_runFiber(runK(k, v), ctx)
+				_runBranch(runK(k, v), ctx)
 			end, ctx.reject)
 			return -- fiber is now suspended; do NOT decrement pending here
 		elseif eid == EID_NDET then
 			if payload == nil then
 				-- Boolean branch: current fiber → true, spawn false branch.
 				ctx.pending += 1
-				_runFiber(runK(k, false), ctx)
+				_runBranch(runK(k, false), ctx)
 				cur = runK(k, true)
 			elseif type(payload) == "table" then
 				local arr: { any } = payload :: { any }
@@ -403,7 +414,7 @@ local function _runFiber(initial: Node, ctx: _FiberCtx): ()
 				-- Current fiber → arr[1]; spawn arr[2..n].
 				ctx.pending += (n - 1)
 				for i = n, 2, -1 do
-					_runFiber(runK(k, arr[i]), ctx)
+					_runBranch(runK(k, arr[i]), ctx)
 				end
 				cur = runK(k, arr[1])
 			elseif type(payload) == "number" then
@@ -418,7 +429,7 @@ local function _runFiber(initial: Node, ctx: _FiberCtx): ()
 				end
 				ctx.pending += (cnt - 1)
 				for i = cnt, 2, -1 do
-					_runFiber(runK(k, i), ctx)
+					_runBranch(runK(k, i), ctx)
 				end
 				cur = runK(k, 1)
 			else
@@ -482,31 +493,30 @@ local function run(node: Node): any
 					return run(runK(k, v))
 				end)
 			end
+
 			local innerPromise = p()
 
 			local PromiseLib = getmetatable(innerPromise)
 			local brStack = br :: { any }
 
-			local ctx: _FiberCtx = {
+			local ctx: _BranchCtx = {
 				results = results :: { any }, -- pre-populated with any sync results
 				pending = bp + 1,
 				resolve = nil :: any,
 				reject = nil :: any,
 			}
 
-			-- Create the outer promise FIRST so ctx.resolve is set before any
-			-- andThen callback could fire (matters for eagerly-resolved promises).
 			local outerPromise = PromiseLib.new(function(resolve: any, reject: any)
 				ctx.resolve = resolve
 				ctx.reject = reject
 			end)
 
 			innerPromise:andThen(function(v: any)
-				_runFiber(runK(k, v), ctx)
+				_runBranch(runK(k, v), ctx)
 			end, ctx.reject)
 
 			for i = 1, bp do
-				_runFiber(brStack[i] :: Node, ctx)
+				_runBranch(brStack[i] :: Node, ctx)
 				brStack[i] = nil
 			end
 
@@ -548,6 +558,13 @@ local function run(node: Node): any
 				cur = runK(k, 1)
 			else
 				error("ndet: invalid parameter, expected nil, number, or table")
+			end
+		elseif eid == EID_APPLY then
+			local s = e.s
+			if s and #s > 0 then
+				task.desynchronize()
+				for i = 1, #s do
+				end
 			end
 		else
 			error(`Unhandled effect: ${getEffectName(eid)}`)
